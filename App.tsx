@@ -601,6 +601,7 @@ export default function App() {
   const myLogs = activeMember ? organizationLogs.filter((log) => log.memberId === activeMember.id) : [];
   const checkedToday = activeMember ? organizationLogs.some((log) => log.date === today && log.memberId === activeMember.id) : false;
   const todayLog = activeMember ? organizationLogs.find((log) => log.date === today && log.memberId === activeMember.id) : undefined;
+  const isReflectionAdmin = activeMember?.name.trim() === '권진호';
   const selectedBibleBook = bibleBooks.find((book) => passage.startsWith(book.name));
   const selectedChapter = Number(passage.match(/(\d+)장/)?.[1] ?? 0) || null;
   const totalTarget = departments.reduce((sum, department) => sum + department.monthlyTargetMembers, 0);
@@ -648,6 +649,7 @@ export default function App() {
   const todayReflections = organizationLogs
     .filter((log) => log.date === today && log.reflection?.trim())
     .sort((a, b) => b.id.localeCompare(a.id));
+  const canDeleteSelectedLog = !!selectedLog && (selectedLog.memberId === activeMember?.id || (isReflectionAdmin && selectedLog.date === today && !!selectedLog.reflection?.trim()));
 
   const shareText = `[${MONTH_LABEL} 성경읽기 챌린지]\n${currentOrganization.name} ${myDepartment.name}는 현재 ${currentDepartmentStats.count} / ${myDepartment.monthlyTargetMembers}명입니다.\n전체는 ${totalCount} / ${totalTarget}명까지 채워졌어요.\n오늘도 말씀 읽기 인증으로 함께해요.`;
 
@@ -798,6 +800,17 @@ export default function App() {
 
     setSelectedLog((current) => (current?.id === id ? null : current));
     setState((prev) => ({ ...prev, logs: prev.logs.filter((log) => log.id !== id) }));
+  };
+
+  const confirmRemoveLog = (log: ReadingLog) => {
+    Alert.alert(
+      '묵상글 삭제',
+      `${log.memberName}님의 오늘 묵상글을 삭제할까요?`,
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '삭제', style: 'destructive', onPress: () => removeLog(log.id) },
+      ],
+    );
   };
 
   const selectBibleBook = (book: { name: string; chapters: number }) => {
@@ -1191,7 +1204,19 @@ export default function App() {
                   <Text style={styles.feedTitle}>{log.memberName} · {departments.find((department) => department.id === log.departmentId)?.name}</Text>
                   <Text style={styles.feedMeta}>{log.passage ?? '성경 읽기 인증'}</Text>
                 </View>
-                <Text style={styles.logBadge}>{formatDate(log.date)}</Text>
+                {isReflectionAdmin ? (
+                  <Pressable
+                    style={styles.deleteButton}
+                    onPress={(event) => {
+                      event.stopPropagation();
+                      confirmRemoveLog(log);
+                    }}
+                  >
+                    <Text style={styles.deleteButtonText}>삭제</Text>
+                  </Pressable>
+                ) : (
+                  <Text style={styles.logBadge}>{formatDate(log.date)}</Text>
+                )}
               </View>
               <Text style={styles.reflectionText}>{log.reflection}</Text>
             </Pressable>
@@ -1248,9 +1273,6 @@ export default function App() {
   const Admin = () => (
     <ScrollView contentContainerStyle={[styles.scrollContent, isWide && styles.formScroll]}>
       <Text style={styles.eyebrow}>운영 설정</Text>
-      <Text style={[styles.title, isCompact && styles.titleCompact]}>앱 운영값을 조정합니다.</Text>
-      <Text style={styles.subtitle}>Supabase 기반으로 단체, 부서, 인증 데이터를 공유합니다. 알림은 기기별로 직접 허용해야 받을 수 있습니다.</Text>
-
       <View style={styles.panel}>
         <SectionHeader title="내 프로필" />
         <Text style={styles.fieldLabel}>이름</Text>
@@ -1428,6 +1450,11 @@ export default function App() {
               <Text style={styles.recordDetailLabel}>묵상글</Text>
               <Text style={styles.recordDetailText}>{selectedLog?.reflection?.trim() || '작성된 묵상글이 없습니다.'}</Text>
             </ScrollView>
+            {selectedLog && canDeleteSelectedLog ? (
+              <Pressable style={styles.dangerButton} onPress={() => confirmRemoveLog(selectedLog)}>
+                <Text style={styles.dangerButtonText}>묵상글 삭제</Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
       </Modal>
