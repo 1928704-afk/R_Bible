@@ -1,0 +1,19 @@
+{
+  "name": "성경읽기 챌린지",
+  "short_name": "성경읽기",
+  "description": "단체와 부서별 성경읽기 인증 현황을 관리하는 PWA 웹앱",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F7F8F4",
+  "theme_color": "#1F6B5C",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

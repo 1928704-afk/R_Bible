@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "성경읽기 챌린지",
+    "slug": "bible-reading-challenge",
+    "version": "1.0.0",
+    "scheme": "biblechallenge",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "description": "청년부 성경읽기 챌린지 참여, 인증, 부서 현황 관리 앱",
+    "android": {
+      "package": "com.youthgroup.biblereadingchallenge",
+      "versionCode": 1
+    },
+    "ios": {
+      "bundleIdentifier": "com.youthgroup.biblereadingchallenge",
+      "buildNumber": "1"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": []
+  }
+}
