@@ -10,16 +10,21 @@ type PushSubscriptionRow = {
 };
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL');
-const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+const serviceRoleKey = Deno.env.get('SERVICE_ROLE_KEY');
 const vapidPublicKey = Deno.env.get('VAPID_PUBLIC_KEY');
 const vapidPrivateKey = Deno.env.get('VAPID_PRIVATE_KEY');
 const vapidSubject = Deno.env.get('VAPID_SUBJECT') ?? 'mailto:admin@example.com';
+const reminderCronSecret = Deno.env.get('REMINDER_CRON_SECRET');
 
 if (vapidPublicKey && vapidPrivateKey) {
   webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
 }
 
-serve(async () => {
+serve(async (request) => {
+  if (reminderCronSecret && request.headers.get('x-cron-secret') !== reminderCronSecret) {
+    return Response.json({ error: 'Unauthorized.' }, { status: 401 });
+  }
+
   if (!supabaseUrl || !serviceRoleKey || !vapidPublicKey || !vapidPrivateKey) {
     return Response.json({ error: 'Missing Supabase or VAPID environment variables.' }, { status: 500 });
   }
