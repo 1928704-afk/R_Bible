@@ -2,13 +2,27 @@
   "name": "bible-reading-challenge",
   "version": "1.0.0",
   "private": true,
+  "description": "PWA web app for church youth group Bible reading certification and department progress tracking.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/1928704-afk/R_Bible.git"
+  },
+  "keywords": [
+    "expo",
+    "react-native-web",
+    "pwa",
+    "supabase",
+    "web-push"
+  ],
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "build:web": "expo export --platform web"
+    "build:web": "expo export --platform web",
+    "typecheck": "tsc --noEmit",
+    "vapid:keys": "web-push generate-vapid-keys"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
@@ -24,6 +38,7 @@
     "@types/node": "^26.1.0",
     "@types/react": "~19.1.0",
     "playwright-core": "^1.61.1",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "web-push": "^3.6.7"
   }
 }
