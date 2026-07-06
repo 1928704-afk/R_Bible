@@ -30,3 +30,51 @@ self.addEventListener('fetch', (event) => {
       .catch(() => caches.match(event.request).then((cached) => cached || caches.match('/'))),
   );
 });
+
+self.addEventListener('push', (event) => {
+  const fallback = {
+    title: '성경읽기 챌린지',
+    body: '오늘의 성경읽기 인증을 남겨주세요.',
+    url: '/',
+  };
+
+  let payload = fallback;
+
+  try {
+    payload = event.data ? { ...fallback, ...event.data.json() } : fallback;
+  } catch {
+    payload = fallback;
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(payload.title || fallback.title, {
+      body: payload.body || fallback.body,
+      icon: '/icon.svg',
+      badge: '/icon.svg',
+      data: { url: payload.url || fallback.url },
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const targetUrl = event.notification.data?.url || '/';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ('focus' in client) {
+          client.navigate(targetUrl);
+          return client.focus();
+        }
+      }
+
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(targetUrl);
+      }
+
+      return undefined;
+    }),
+  );
+});

@@ -73,6 +73,7 @@ type AppState = {
 const STORAGE_KEY = 'bible-reading-challenge-app-v2';
 const LEGACY_WEB_STORAGE_KEY = 'bible-reading-challenge-web-v1';
 const MONTH_LABEL = '7월';
+const VAPID_PUBLIC_KEY = process.env.EXPO_PUBLIC_VAPID_PUBLIC_KEY;
 
 const sampleOrganization: Organization = {
   id: 'org-busan-youth',
@@ -130,6 +131,8 @@ type ReadingLogRow = {
   passage?: string | null;
   reflection?: string | null;
 };
+
+type NotificationState = 'unsupported' | 'default' | 'granted' | 'denied' | 'subscribed' | 'missing-key';
 
 const bibleBooks = [
   { name: '창세기', chapters: 50 },
@@ -214,6 +217,19 @@ function formatDate(dateKey: string) {
 
 function makeId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = `${base64String}${padding}`.replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = globalThis.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let index = 0; index < rawData.length; index += 1) {
+    outputArray[index] = rawData.charCodeAt(index);
+  }
+
+  return outputArray;
 }
 
 function normalizeState(parsed: Partial<AppState>): AppState {
@@ -395,6 +411,35 @@ async function deleteRemoteReadingLog(id: string) {
   if (error) throw error;
 }
 
+async function saveRemotePushSubscription(member: Member, subscription: PushSubscription) {
+  if (!supabase) return;
+
+  const subscriptionJson = subscription.toJSON();
+  const p256dh = subscriptionJson.keys?.p256dh;
+  const auth = subscriptionJson.keys?.auth;
+
+  if (!p256dh || !auth) {
+    throw new Error('Push subscription keys are missing.');
+  }
+
+  const webNavigator = (globalThis as unknown as { navigator?: Navigator }).navigator;
+  const { error } = await supabase.from('push_subscriptions').upsert(
+    {
+      id: makeId(),
+      organization_id: member.organizationId,
+      member_id: member.id,
+      endpoint: subscription.endpoint,
+      p256dh,
+      auth,
+      user_agent: webNavigator?.userAgent ?? null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'endpoint' },
+  );
+
+  if (error) throw error;
+}
+
 async function loadLocalState(): Promise<AppState> {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
@@ -481,6 +526,7 @@ export default function App() {
   const [joinOrganizationId, setJoinOrganizationId] = useState(sampleOrganization.id);
   const [joinDepartmentId, setJoinDepartmentId] = useState(sampleOrganization.departments[0].id);
   const [joinMemberName, setJoinMemberName] = useState('');
+  const [notificationStatus, setNotificationStatus] = useState<NotificationState>('default');
 
   useEffect(() => {
     let mounted = true;
@@ -501,6 +547,7 @@ export default function App() {
 
     const webDocument = (globalThis as unknown as { document?: Document }).document;
     const webNavigator = (globalThis as unknown as { navigator?: Navigator & { serviceWorker?: ServiceWorkerContainer } }).navigator;
+    const webGlobal = globalThis as unknown as { Notification?: { permission: NotificationPermission }; PushManager?: unknown };
 
     if (webDocument && !webDocument.querySelector('link[rel="manifest"]')) {
       const manifestLink = webDocument.createElement('link');
@@ -521,6 +568,16 @@ export default function App() {
       appleMeta.name = 'apple-mobile-web-app-capable';
       appleMeta.content = 'yes';
       webDocument.head.appendChild(appleMeta);
+    }
+
+    if (!webGlobal.Notification || !webNavigator?.serviceWorker || !webGlobal.PushManager) {
+      setNotificationStatus('unsupported');
+    } else if (!VAPID_PUBLIC_KEY) {
+      setNotificationStatus('missing-key');
+    } else if (webGlobal.Notification.permission === 'denied') {
+      setNotificationStatus('denied');
+    } else if (webGlobal.Notification.permission === 'granted') {
+      setNotificationStatus('granted');
     }
 
     if (webNavigator?.serviceWorker) {
@@ -756,6 +813,63 @@ export default function App() {
     setPassage(`${selectedBibleBook.name} ${chapter}장`);
   };
 
+  const requestNotifications = async () => {
+    if (!activeMember) {
+      Alert.alert('가입 필요', '단체와 부서를 선택해 가입한 뒤 알림을 설정할 수 있습니다.');
+      return;
+    }
+
+    if (Platform.OS !== 'web') {
+      setNotificationStatus('unsupported');
+      Alert.alert('웹앱 알림', '현재 알림 설정은 PWA 웹앱 배포 환경에서 사용할 수 있습니다.');
+      return;
+    }
+
+    const webNavigator = (globalThis as unknown as { navigator?: Navigator & { serviceWorker?: ServiceWorkerContainer } }).navigator;
+    const webGlobal = globalThis as unknown as {
+      Notification?: {
+        permission: NotificationPermission;
+        requestPermission: () => Promise<NotificationPermission>;
+      };
+      PushManager?: unknown;
+    };
+
+    if (!webGlobal.Notification || !webNavigator?.serviceWorker || !webGlobal.PushManager) {
+      setNotificationStatus('unsupported');
+      Alert.alert('알림 미지원', '이 브라우저는 웹 푸시 알림을 지원하지 않습니다. iPhone은 홈 화면에 추가한 웹앱에서 다시 시도해 주세요.');
+      return;
+    }
+
+    if (!VAPID_PUBLIC_KEY) {
+      setNotificationStatus('missing-key');
+      Alert.alert('VAPID 키 필요', 'Cloudflare Pages 환경 변수에 EXPO_PUBLIC_VAPID_PUBLIC_KEY를 먼저 추가해야 합니다.');
+      return;
+    }
+
+    try {
+      const permission = await webGlobal.Notification.requestPermission();
+      setNotificationStatus(permission === 'granted' ? 'granted' : permission);
+
+      if (permission !== 'granted') {
+        Alert.alert('알림 권한 필요', '브라우저 알림 권한을 허용해야 리마인드를 받을 수 있습니다.');
+        return;
+      }
+
+      const registration = await webNavigator.serviceWorker.ready;
+      const existingSubscription = await registration.pushManager.getSubscription();
+      const subscription = existingSubscription ?? await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as unknown as BufferSource,
+      });
+
+      await saveRemotePushSubscription(activeMember, subscription);
+      setNotificationStatus('subscribed');
+      Alert.alert('알림 설정 완료', '이 기기에서 성경읽기 리마인드를 받을 수 있습니다.');
+    } catch {
+      Alert.alert('알림 설정 실패', '브라우저 권한, VAPID 키, Supabase push_subscriptions 테이블 설정을 확인해 주세요.');
+    }
+  };
+
   const share = async () => {
     try {
       if (Platform.OS === 'web') {
@@ -778,6 +892,15 @@ export default function App() {
     setReflection('');
     setTab('dashboard');
   };
+
+  const notificationStatusText = {
+    unsupported: '현재 브라우저에서는 웹 푸시 알림을 지원하지 않습니다.',
+    default: '알림 받기를 누르면 이 기기의 브라우저 권한 요청이 열립니다.',
+    granted: '브라우저 알림 권한이 허용되었습니다. 구독 저장을 완료하려면 알림 받기를 눌러 주세요.',
+    denied: '브라우저에서 알림이 차단되어 있습니다. 사이트 설정에서 알림 허용으로 변경해 주세요.',
+    subscribed: '이 기기는 리마인드 알림 수신 대상으로 저장되었습니다.',
+    'missing-key': 'Cloudflare Pages에 EXPO_PUBLIC_VAPID_PUBLIC_KEY 환경 변수를 추가해야 합니다.',
+  }[notificationStatus];
 
   const Onboarding = () => {
     const selectedJoinOrganization = state.organizations.find((organization) => organization.id === joinOrganizationId) ?? state.organizations[0];
@@ -1049,7 +1172,6 @@ export default function App() {
   const TodayReflections = () => (
     <ScrollView contentContainerStyle={[styles.scrollContent, isWide && styles.wideScroll]}>
       <Text style={styles.eyebrow}>오늘의 묵상글</Text>
-      <Text style={[styles.title, isCompact && styles.titleCompact]}>{formatDate(today)} 함께 나눈 묵상</Text>
       <Text style={styles.subtitle}>오늘 인증할 때 작성한 묵상글만 표시됩니다. 자정이 지나면 다음 날 목록으로 자동 초기화됩니다.</Text>
 
       <View style={styles.panel}>
@@ -1127,7 +1249,7 @@ export default function App() {
     <ScrollView contentContainerStyle={[styles.scrollContent, isWide && styles.formScroll]}>
       <Text style={styles.eyebrow}>운영 설정</Text>
       <Text style={[styles.title, isCompact && styles.titleCompact]}>앱 운영값을 조정합니다.</Text>
-      <Text style={styles.subtitle}>현재 완성본은 기기 저장 기반입니다. 교회 전체 배포 시 서버 인증과 관리자 DB를 연결하면 됩니다.</Text>
+      <Text style={styles.subtitle}>Supabase 기반으로 단체, 부서, 인증 데이터를 공유합니다. 알림은 기기별로 직접 허용해야 받을 수 있습니다.</Text>
 
       <View style={styles.panel}>
         <SectionHeader title="내 프로필" />
@@ -1174,6 +1296,10 @@ export default function App() {
           </View>
           <Switch value={state.reminders.department} onValueChange={(department) => setState((prev) => ({ ...prev, reminders: { ...prev.reminders, department } }))} />
         </View>
+        <Pressable style={styles.secondaryButton} onPress={requestNotifications}>
+          <Text style={styles.secondaryButtonText}>알림 받기</Text>
+        </Pressable>
+        <Text style={styles.notificationHelp}>{notificationStatusText}</Text>
       </View>
 
       <View style={styles.panel}>
@@ -1564,6 +1690,7 @@ const styles = StyleSheet.create({
   settingCopy: { flex: 1 },
   settingTitle: { color: '#172A27', fontSize: 15, fontWeight: '900' },
   settingSub: { color: '#6F7E78', fontSize: 12, fontWeight: '700', marginTop: 4 },
+  notificationHelp: { color: '#6F7E78', fontSize: 12, fontWeight: '700', lineHeight: 18, marginTop: 10 },
   dangerButton: { backgroundColor: '#F7E7E4', paddingVertical: 15, paddingHorizontal: 18, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginTop: 10 },
   dangerButtonText: { color: '#A14435', fontSize: 15, fontWeight: '900' },
   tabbar: {
