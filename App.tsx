@@ -16,6 +16,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 type Tab = 'dashboard' | 'check' | 'departments' | 'records' | 'admin';
 
@@ -94,6 +95,40 @@ const initialState: AppState = {
     streak: true,
     department: true,
   },
+};
+
+type OrganizationRow = {
+  id: string;
+  name: string;
+  invite_code: string;
+  owner_name: string;
+  created_at: string;
+};
+
+type DepartmentRow = {
+  id: string;
+  organization_id: string;
+  name: string;
+  monthly_target_members: number;
+};
+
+type MemberRow = {
+  id: string;
+  organization_id: string;
+  department_id: string;
+  name: string;
+  role: 'owner' | 'member';
+};
+
+type ReadingLogRow = {
+  id: string;
+  date: string;
+  organization_id: string;
+  department_id: string;
+  member_id: string;
+  member_name: string;
+  passage?: string | null;
+  reflection?: string | null;
 };
 
 const bibleBooks = [
@@ -221,7 +256,146 @@ function normalizeState(parsed: Partial<AppState>): AppState {
   };
 }
 
-async function loadState(): Promise<AppState> {
+function organizationToRow(organization: Organization): OrganizationRow {
+  return {
+    id: organization.id,
+    name: organization.name,
+    invite_code: organization.inviteCode,
+    owner_name: organization.ownerName,
+    created_at: organization.createdAt,
+  };
+}
+
+function departmentToRow(organizationId: string, department: Department): DepartmentRow {
+  return {
+    id: department.id,
+    organization_id: organizationId,
+    name: department.name,
+    monthly_target_members: department.monthlyTargetMembers,
+  };
+}
+
+function memberToRow(member: Member): MemberRow {
+  return {
+    id: member.id,
+    organization_id: member.organizationId,
+    department_id: member.departmentId,
+    name: member.name,
+    role: member.role,
+  };
+}
+
+function readingLogToRow(log: ReadingLog): ReadingLogRow {
+  return {
+    id: log.id,
+    date: log.date,
+    organization_id: log.organizationId,
+    department_id: log.departmentId,
+    member_id: log.memberId,
+    member_name: log.memberName,
+    passage: log.passage ?? null,
+    reflection: log.reflection ?? null,
+  };
+}
+
+async function ensureDefaultRemoteOrganization() {
+  if (!supabase) return;
+
+  await supabase.from('organizations').upsert(organizationToRow(sampleOrganization), { onConflict: 'id' });
+  await supabase.from('departments').upsert(
+    sampleOrganization.departments.map((department) => departmentToRow(sampleOrganization.id, department)),
+    { onConflict: 'id' },
+  );
+}
+
+async function loadRemoteState(localState: AppState): Promise<AppState> {
+  if (!isSupabaseConfigured || !supabase) return localState;
+
+  const { data: organizationRows, error: organizationError } = await supabase
+    .from('organizations')
+    .select('id,name,invite_code,owner_name,created_at')
+    .order('created_at', { ascending: true });
+
+  if (organizationError) return localState;
+
+  if (!organizationRows || organizationRows.length === 0) {
+    await ensureDefaultRemoteOrganization();
+  }
+
+  const [{ data: refreshedOrganizations }, { data: departmentRows }, { data: logRows }] = await Promise.all([
+    supabase.from('organizations').select('id,name,invite_code,owner_name,created_at').order('created_at', { ascending: true }),
+    supabase.from('departments').select('id,organization_id,name,monthly_target_members'),
+    supabase.from('reading_logs').select('id,date,organization_id,department_id,member_id,member_name,passage,reflection').order('date', { ascending: false }),
+  ]);
+
+  const remoteOrganizations = (refreshedOrganizations ?? organizationRows ?? []).map((organization) => ({
+    id: organization.id,
+    name: organization.name,
+    inviteCode: organization.invite_code,
+    ownerName: organization.owner_name,
+    createdAt: organization.created_at,
+    departments: (departmentRows ?? [])
+      .filter((department) => department.organization_id === organization.id)
+      .map((department) => ({
+        id: department.id,
+        name: department.name,
+        monthlyTargetMembers: department.monthly_target_members,
+      })),
+  }));
+
+  return normalizeState({
+    ...localState,
+    organizations: remoteOrganizations.length > 0 ? remoteOrganizations : localState.organizations,
+    logs: (logRows ?? []).map((log) => ({
+      id: log.id,
+      date: log.date,
+      organizationId: log.organization_id,
+      departmentId: log.department_id,
+      memberId: log.member_id,
+      memberName: log.member_name,
+      passage: log.passage ?? undefined,
+      reflection: log.reflection ?? undefined,
+    })),
+  });
+}
+
+async function saveRemoteOrganization(organization: Organization, ownerMember: Member) {
+  if (!supabase) return;
+
+  const { error: organizationError } = await supabase.from('organizations').insert(organizationToRow(organization));
+  if (organizationError) throw organizationError;
+
+  const { error: departmentError } = await supabase
+    .from('departments')
+    .insert(organization.departments.map((department) => departmentToRow(organization.id, department)));
+  if (departmentError) throw departmentError;
+
+  const { error: memberError } = await supabase.from('members').insert(memberToRow(ownerMember));
+  if (memberError) throw memberError;
+}
+
+async function saveRemoteMember(member: Member) {
+  if (!supabase) return;
+
+  const { error } = await supabase.from('members').insert(memberToRow(member));
+  if (error) throw error;
+}
+
+async function saveRemoteReadingLog(log: ReadingLog) {
+  if (!supabase) return;
+
+  const { error } = await supabase.from('reading_logs').insert(readingLogToRow(log));
+  if (error) throw error;
+}
+
+async function deleteRemoteReadingLog(id: string) {
+  if (!supabase) return;
+
+  const { error } = await supabase.from('reading_logs').delete().eq('id', id);
+  if (error) throw error;
+}
+
+async function loadLocalState(): Promise<AppState> {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
     if (raw) return normalizeState(JSON.parse(raw) as Partial<AppState>);
@@ -235,6 +409,11 @@ async function loadState(): Promise<AppState> {
   }
 
   return initialState;
+}
+
+async function loadState(): Promise<AppState> {
+  const localState = await loadLocalState();
+  return loadRemoteState(localState);
 }
 
 async function saveState(state: AppState) {
@@ -426,7 +605,7 @@ export default function App() {
     setDepartmentDrafts((prev) => (prev.length <= 1 ? prev : prev.filter((department) => department.id !== id)));
   };
 
-  const createOrganization = () => {
+  const createOrganization = async () => {
     const name = organizationName.trim();
     const owner = ownerName.trim();
     const departmentsToCreate = departmentDrafts
@@ -458,6 +637,13 @@ export default function App() {
       role: 'owner',
     };
 
+    try {
+      await saveRemoteOrganization(organization, ownerMember);
+    } catch {
+      Alert.alert('단체 생성 실패', 'Supabase 테이블 설정을 확인해 주세요. SQL 스키마를 먼저 실행해야 합니다.');
+      return;
+    }
+
     setState((prev) => ({
       ...prev,
       organizations: [organization, ...prev.organizations],
@@ -469,7 +655,7 @@ export default function App() {
     setTab('dashboard');
   };
 
-  const joinOrganization = () => {
+  const joinOrganization = async () => {
     const organization = state.organizations.find((item) => item.id === joinOrganizationId);
     const department = organization?.departments.find((item) => item.id === joinDepartmentId) ?? organization?.departments[0];
     const memberName = joinMemberName.trim();
@@ -487,6 +673,13 @@ export default function App() {
       role: 'member',
     };
 
+    try {
+      await saveRemoteMember(member);
+    } catch {
+      Alert.alert('가입 실패', 'Supabase 연결 또는 members 테이블 설정을 확인해 주세요.');
+      return;
+    }
+
     setState((prev) => ({
       ...prev,
       currentOrganizationId: organization.id,
@@ -495,7 +688,7 @@ export default function App() {
     setTab('dashboard');
   };
 
-  const checkToday = () => {
+  const checkToday = async () => {
     if (!activeMember) return;
 
     if (checkedToday) {
@@ -505,19 +698,28 @@ export default function App() {
 
     const trimmedPassage = passage.trim();
     const trimmedReflection = reflection.trim();
+    const nextLog: ReadingLog = {
+      id: makeId(),
+      date: today,
+      organizationId: activeMember.organizationId,
+      departmentId: activeMember.departmentId,
+      memberId: activeMember.id,
+      memberName: activeMember.name.trim() || '이름 없음',
+      passage: trimmedPassage || undefined,
+      reflection: trimmedReflection || undefined,
+    };
+
+    try {
+      await saveRemoteReadingLog(nextLog);
+    } catch {
+      Alert.alert('인증 저장 실패', 'Supabase 연결 또는 reading_logs 테이블 설정을 확인해 주세요.');
+      return;
+    }
+
     setState((prev) => ({
       ...prev,
       logs: [
-        {
-          id: makeId(),
-          date: today,
-          organizationId: activeMember.organizationId,
-          departmentId: activeMember.departmentId,
-          memberId: activeMember.id,
-          memberName: activeMember.name.trim() || '이름 없음',
-          passage: trimmedPassage || undefined,
-          reflection: trimmedReflection || undefined,
-        },
+        nextLog,
         ...prev.logs,
       ],
     }));
@@ -526,7 +728,14 @@ export default function App() {
     setCompletedModal(true);
   };
 
-  const removeLog = (id: string) => {
+  const removeLog = async (id: string) => {
+    try {
+      await deleteRemoteReadingLog(id);
+    } catch {
+      Alert.alert('삭제 실패', 'Supabase 인증 기록 삭제에 실패했습니다.');
+      return;
+    }
+
     setSelectedLog((current) => (current?.id === id ? null : current));
     setState((prev) => ({ ...prev, logs: prev.logs.filter((log) => log.id !== id) }));
   };
