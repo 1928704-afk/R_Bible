@@ -588,6 +588,9 @@ export default function App() {
   }, [checkedToday, myLogs]);
 
   const recentLogs = [...organizationLogs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+  const todayReflections = organizationLogs
+    .filter((log) => log.date === today && log.reflection?.trim())
+    .sort((a, b) => b.id.localeCompare(a.id));
 
   const shareText = `[${MONTH_LABEL} 성경읽기 챌린지]\n${currentOrganization.name} ${myDepartment.name}는 현재 ${currentDepartmentStats.count} / ${myDepartment.monthlyTargetMembers}명입니다.\n전체는 ${totalCount} / ${totalTarget}명까지 채워졌어요.\n오늘도 말씀 읽기 인증으로 함께해요.`;
 
@@ -1043,35 +1046,35 @@ export default function App() {
     </ScrollView>
   );
 
-  const Departments = () => (
+  const TodayReflections = () => (
     <ScrollView contentContainerStyle={[styles.scrollContent, isWide && styles.wideScroll]}>
-      <Text style={styles.eyebrow}>부서별 운영 현황</Text>
-      <View style={styles.overallCard}>
-        <View style={styles.cardHeaderRow}>
-          <Text style={styles.panelKickerDark}>{currentOrganization.name} 전체</Text>
-          <Text style={styles.cardValue}>{totalCount} / {totalTarget}명</Text>
-        </View>
-        <ProgressBar value={totalCount} total={totalTarget} />
-      </View>
+      <Text style={styles.eyebrow}>오늘의 묵상글</Text>
+      <Text style={[styles.title, isCompact && styles.titleCompact]}>{formatDate(today)} 함께 나눈 묵상</Text>
+      <Text style={styles.subtitle}>오늘 인증할 때 작성한 묵상글만 표시됩니다. 자정이 지나면 다음 날 목록으로 자동 초기화됩니다.</Text>
 
-      <View style={styles.departmentGrid}>
-        {departmentStats.map((department) => (
-          <View key={department.id} style={[styles.departmentCard, myDepartment.id === department.id && styles.departmentCardSelected]}>
-            <View style={styles.cardHeaderRow}>
-              <View>
-                <Text style={styles.departmentName}>{department.name}</Text>
-                <Text style={styles.mutedText}>월 목표 {department.monthlyTargetMembers}명</Text>
+      <View style={styles.panel}>
+        <SectionHeader title="오늘 올라온 묵상" action={`${todayReflections.length}개`} />
+        {todayReflections.length === 0 ? (
+          <Text style={styles.emptyText}>아직 오늘 작성된 묵상글이 없습니다.</Text>
+        ) : (
+          todayReflections.map((log) => (
+            <Pressable
+              key={log.id}
+              hitSlop={4}
+              style={({ pressed }) => [styles.reflectionItem, pressed && styles.pressedSurface]}
+              onPress={() => setSelectedLog(log)}
+            >
+              <View style={styles.cardHeaderRow}>
+                <View style={styles.feedBody}>
+                  <Text style={styles.feedTitle}>{log.memberName} · {departments.find((department) => department.id === log.departmentId)?.name}</Text>
+                  <Text style={styles.feedMeta}>{log.passage ?? '성경 읽기 인증'}</Text>
+                </View>
+                <Text style={styles.logBadge}>{formatDate(log.date)}</Text>
               </View>
-              <Text style={styles.statusPill}>{department.percent}%</Text>
-            </View>
-            <Text style={styles.departmentCount}>{department.count}<Text style={styles.departmentUnit}> / {department.monthlyTargetMembers}명</Text></Text>
-            <ProgressBar value={department.count} total={department.monthlyTargetMembers} />
-            <View style={styles.cardFooterRow}>
-              <Text style={styles.mutedText}>참여 {department.participants}명</Text>
-              <Text style={styles.mutedText}>{department.remaining}명 남음</Text>
-            </View>
-          </View>
-        ))}
+              <Text style={styles.reflectionText}>{log.reflection}</Text>
+            </Pressable>
+          ))
+        )}
       </View>
     </ScrollView>
   );
@@ -1185,12 +1188,12 @@ export default function App() {
     </ScrollView>
   );
 
-  const content = tab === 'dashboard' ? Dashboard() : tab === 'check' ? Check() : tab === 'departments' ? Departments() : tab === 'records' ? Records() : Admin();
+  const content = tab === 'dashboard' ? Dashboard() : tab === 'check' ? Check() : tab === 'departments' ? TodayReflections() : tab === 'records' ? Records() : Admin();
 
   const navItems: Array<{ key: Tab; label: string; short: string; icon: string }> = [
     { key: 'dashboard', label: '대시보드', short: '홈', icon: '⌂' },
     { key: 'check', label: '오늘 인증', short: '인증', icon: '+' },
-    { key: 'departments', label: '부서 현황', short: '현황', icon: '▦' },
+    { key: 'departments', label: '오늘의 묵상글', short: '묵상', icon: '▦' },
     { key: 'records', label: '내 기록', short: '기록', icon: '◷' },
     { key: 'admin', label: '운영 설정', short: '설정', icon: '⋯' },
   ];
@@ -1494,6 +1497,8 @@ const styles = StyleSheet.create({
   feedTitle: { color: '#1C302D', fontSize: 14, fontWeight: '900' },
   feedMeta: { color: '#71807B', fontSize: 12, fontWeight: '700', marginTop: 3 },
   logBadge: { color: '#1F6B5C', backgroundColor: '#E6F1ED', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, overflow: 'hidden', fontSize: 12, fontWeight: '900' },
+  reflectionItem: { paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#EEF2EC' },
+  reflectionText: { color: '#263834', fontSize: 15, fontWeight: '700', lineHeight: 24, marginTop: 12 },
   checkCard: { backgroundColor: '#FFFFFF', borderRadius: 8, padding: 18, marginTop: 22, shadowColor: '#253B35', shadowOpacity: 0.06, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 3 },
   cardTitle: { color: '#172A27', fontSize: 16, fontWeight: '900' },
   statusPill: { color: '#1F6B5C', backgroundColor: '#E6F1ED', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, overflow: 'hidden', fontSize: 12, fontWeight: '900' },
