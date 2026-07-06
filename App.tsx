@@ -921,12 +921,12 @@ export default function App() {
       </View>
 
       <View style={[styles.twoColumn, isWide && styles.twoColumnWide]}>
-        <View style={styles.panel}>
+        <View style={[styles.panel, isWide && styles.panelWide]}>
           <SectionHeader title="부서 진행률" action={`${MONTH_LABEL} 목표`} />
-          {departmentStats.map((department) => (
+          {departmentStats.map((department, index) => (
             <Pressable
               key={department.id}
-              style={styles.departmentItem}
+              style={[styles.departmentItem, index === departmentStats.length - 1 && styles.departmentItemLast]}
               onPress={() => setState((prev) => (prev.currentMember ? { ...prev, currentMember: { ...prev.currentMember, departmentId: department.id } } : prev))}
             >
               <View style={styles.cardHeaderRow}>
@@ -941,7 +941,7 @@ export default function App() {
           ))}
         </View>
 
-        <View style={styles.panel}>
+        <View style={[styles.panel, isWide && styles.panelWide]}>
           <SectionHeader title="최근 인증" action="최근순" />
           {recentLogs.length === 0 ? (
             <Text style={styles.emptyText}>아직 인증 기록이 없습니다.</Text>
@@ -1394,7 +1394,7 @@ const styles = StyleSheet.create({
   optionTitleActive: { color: '#1F6B5C' },
   segmentedWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   segmentWrapItem: { minWidth: 96, flexGrow: 1 },
-  scrollContent: { padding: 18, paddingBottom: 96 },
+  scrollContent: { padding: 18, paddingBottom: 128, flexGrow: 1 },
   wideScroll: { padding: 32, paddingBottom: 44, maxWidth: 1120, width: '100%', alignSelf: 'center' },
   formScroll: { padding: 28, paddingBottom: 40, maxWidth: 760, width: '100%', alignSelf: 'center' },
   hero: { alignItems: 'center', paddingTop: 10, paddingBottom: 8 },
@@ -1470,11 +1470,13 @@ const styles = StyleSheet.create({
   statHelper: { color: '#7B8984', fontSize: 12, fontWeight: '700', marginTop: 6 },
   twoColumn: { gap: 14, marginTop: 14 },
   twoColumnWide: { flexDirection: 'row', alignItems: 'flex-start' },
-  panel: { flex: 1, backgroundColor: '#FFFFFF', borderRadius: 8, padding: 18, marginTop: 16, shadowColor: '#253B35', shadowOpacity: 0.05, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 2 },
+  panel: { backgroundColor: '#FFFFFF', borderRadius: 8, padding: 18, marginTop: 16, shadowColor: '#253B35', shadowOpacity: 0.05, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 2, overflow: 'visible' },
+  panelWide: { flex: 1 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   sectionTitle: { color: '#172A27', fontSize: 18, fontWeight: '900' },
   sectionAction: { color: '#77847F', fontSize: 12, fontWeight: '800' },
-  departmentItem: { paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#EEF2EC' },
+  departmentItem: { minHeight: 82, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#EEF2EC' },
+  departmentItemLast: { borderBottomWidth: 0, paddingBottom: 4 },
   cardHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   departmentName: { color: '#172A27', fontSize: 16, fontWeight: '900' },
   mutedText: { color: '#6F7E78', fontSize: 12, fontWeight: '700', marginTop: 4 },
