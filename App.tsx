@@ -642,7 +642,7 @@ export default function App() {
       cursor.setDate(cursor.getDate() - 1);
     }
 
-    return streak || (checkedToday ? 1 : 3);
+    return streak || (checkedToday ? 1 : 0);
   }, [checkedToday, myLogs]);
 
   const recentLogs = [...organizationLogs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
@@ -803,9 +803,19 @@ export default function App() {
   };
 
   const confirmRemoveLog = (log: ReadingLog) => {
+    const message = `${log.memberName}님의 오늘 묵상글을 삭제할까요?`;
+
+    if (Platform.OS === 'web') {
+      const confirmed = (globalThis as unknown as { confirm?: (text: string) => boolean }).confirm?.(message) ?? true;
+      if (confirmed) {
+        void removeLog(log.id);
+      }
+      return;
+    }
+
     Alert.alert(
       '묵상글 삭제',
-      `${log.memberName}님의 오늘 묵상글을 삭제할까요?`,
+      message,
       [
         { text: '취소', style: 'cancel' },
         { text: '삭제', style: 'destructive', onPress: () => removeLog(log.id) },
