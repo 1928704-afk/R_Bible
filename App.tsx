@@ -88,13 +88,7 @@ const sampleOrganization: Organization = {
 
 const initialState: AppState = {
   organizations: [sampleOrganization],
-  logs: [
-    { id: 'seed-1', date: '2026-07-01', organizationId: sampleOrganization.id, departmentId: 'dept-wheat', memberId: 'member-seed-kim', memberName: '김청년', passage: '요한복음 1장' },
-    { id: 'seed-2', date: '2026-07-03', organizationId: sampleOrganization.id, departmentId: 'dept-wheat', memberId: 'member-seed-kim', memberName: '김청년', passage: '요한복음 2장', reflection: '말씀이 일상의 기준이 되게 하기' },
-    { id: 'seed-3', date: '2026-07-04', organizationId: sampleOrganization.id, departmentId: 'dept-wheat', memberId: 'member-seed-kim', memberName: '김청년', passage: '시편 23편' },
-    { id: 'seed-4', date: '2026-07-05', organizationId: sampleOrganization.id, departmentId: 'dept-covenant', memberId: 'member-seed-min', memberName: '민수', passage: '잠언 3장' },
-    { id: 'seed-5', date: '2026-07-05', organizationId: sampleOrganization.id, departmentId: 'dept-ireh', memberId: 'member-seed-soo', memberName: '수진', passage: '로마서 8장' },
-  ],
+  logs: [],
   reminders: {
     daily: true,
     streak: true,
@@ -740,18 +734,22 @@ export default function App() {
 
         <View style={styles.panel}>
           <SectionHeader title="최근 인증" action="최근순" />
-          {recentLogs.map((log) => (
-            <View key={log.id} style={styles.feedItem}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{log.memberName.slice(0, 1)}</Text>
+          {recentLogs.length === 0 ? (
+            <Text style={styles.emptyText}>아직 인증 기록이 없습니다.</Text>
+          ) : (
+            recentLogs.map((log) => (
+              <View key={log.id} style={styles.feedItem}>
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{log.memberName.slice(0, 1)}</Text>
+                </View>
+                <View style={styles.feedBody}>
+                  <Text style={styles.feedTitle}>{log.memberName} · {departments.find((department) => department.id === log.departmentId)?.name}</Text>
+                  <Text style={styles.feedMeta}>{formatDate(log.date)} · {log.passage ?? '성경 읽기 인증'}</Text>
+                </View>
+                <Text style={styles.logBadge}>+1</Text>
               </View>
-              <View style={styles.feedBody}>
-                <Text style={styles.feedTitle}>{log.memberName} · {departments.find((department) => department.id === log.departmentId)?.name}</Text>
-                <Text style={styles.feedMeta}>{formatDate(log.date)} · {log.passage ?? '성경 읽기 인증'}</Text>
-              </View>
-              <Text style={styles.logBadge}>+1</Text>
-            </View>
-          ))}
+            ))
+          )}
         </View>
       </View>
     </ScrollView>
@@ -863,12 +861,6 @@ export default function App() {
               <Text style={styles.mutedText}>참여 {department.participants}명</Text>
               <Text style={styles.mutedText}>{department.remaining}명 남음</Text>
             </View>
-            <Pressable
-              style={styles.outlineButton}
-              onPress={() => setState((prev) => (prev.currentMember ? { ...prev, currentMember: { ...prev.currentMember, departmentId: department.id } } : prev))}
-            >
-              <Text style={styles.outlineButtonText}>내 부서로 선택</Text>
-            </Pressable>
           </View>
         ))}
       </View>
