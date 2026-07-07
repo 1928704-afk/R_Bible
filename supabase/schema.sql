@@ -48,6 +48,14 @@ create table if not exists public.push_subscriptions (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.announcements (
+  id text primary key,
+  organization_id text not null references public.organizations(id) on delete cascade,
+  title text not null default '오늘 공지',
+  body text not null default '',
+  updated_at timestamptz not null default now()
+);
+
 alter table public.organizations
   add column if not exists target_metric text not null default 'members' check (target_metric in ('members', 'chapters'));
 
@@ -60,12 +68,14 @@ create index if not exists reading_logs_organization_id_date_idx on public.readi
 create unique index if not exists reading_logs_member_date_idx on public.reading_logs(member_id, date);
 create index if not exists push_subscriptions_organization_id_idx on public.push_subscriptions(organization_id);
 create index if not exists push_subscriptions_member_id_idx on public.push_subscriptions(member_id);
+create index if not exists announcements_organization_id_idx on public.announcements(organization_id);
 
 alter table public.organizations enable row level security;
 alter table public.departments enable row level security;
 alter table public.members enable row level security;
 alter table public.reading_logs enable row level security;
 alter table public.push_subscriptions enable row level security;
+alter table public.announcements enable row level security;
 
 drop policy if exists "public read organizations" on public.organizations;
 drop policy if exists "public insert organizations" on public.organizations;
@@ -80,6 +90,7 @@ drop policy if exists "public read push subscriptions" on public.push_subscripti
 drop policy if exists "public insert push subscriptions" on public.push_subscriptions;
 drop policy if exists "public update push subscriptions" on public.push_subscriptions;
 drop policy if exists "public delete push subscriptions" on public.push_subscriptions;
+drop policy if exists "public read announcements" on public.announcements;
 
 create policy "public read organizations" on public.organizations for select using (true);
 create policy "public insert organizations" on public.organizations for insert with check (true);
@@ -98,3 +109,5 @@ create policy "public read push subscriptions" on public.push_subscriptions for 
 create policy "public insert push subscriptions" on public.push_subscriptions for insert with check (true);
 create policy "public update push subscriptions" on public.push_subscriptions for update using (true) with check (true);
 create policy "public delete push subscriptions" on public.push_subscriptions for delete using (true);
+
+create policy "public read announcements" on public.announcements for select using (true);

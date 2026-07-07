@@ -61,11 +61,21 @@ type ReadingLog = {
   reflection?: string;
 };
 
+type Announcement = {
+  id: string;
+  organizationId: OrganizationId;
+  title: string;
+  body: string;
+  updatedAt: string;
+};
+
 type AppState = {
   organizations: Organization[];
   currentOrganizationId?: OrganizationId;
   currentMember?: Member;
+  members: Member[];
   logs: ReadingLog[];
+  announcements: Announcement[];
   reminders: {
     daily: boolean;
     streak: boolean;
@@ -94,7 +104,9 @@ const sampleOrganization: Organization = {
 
 const initialState: AppState = {
   organizations: [sampleOrganization],
+  members: [],
   logs: [],
+  announcements: [],
   reminders: {
     daily: true,
     streak: true,
@@ -136,6 +148,14 @@ type ReadingLogRow = {
   read_chapters?: number | null;
   passage?: string | null;
   reflection?: string | null;
+};
+
+type AnnouncementRow = {
+  id: string;
+  organization_id: string;
+  title: string;
+  body: string;
+  updated_at: string;
 };
 
 type NotificationState = 'unsupported' | 'default' | 'granted' | 'denied' | 'subscribed' | 'missing-key';
@@ -285,6 +305,12 @@ function normalizeState(parsed: Partial<AppState>): AppState {
         readChapters: normalizeReadChapters(log.readChapters),
       }))
       : initialState.logs,
+    members: Array.isArray(parsed.members)
+      ? parsed.members.filter((member) => organizations.some((organization) => organization.id === member.organizationId))
+      : initialState.members,
+    announcements: Array.isArray(parsed.announcements)
+      ? parsed.announcements.filter((announcement) => organizations.some((organization) => organization.id === announcement.organizationId))
+      : initialState.announcements,
   };
 }
 
@@ -332,6 +358,16 @@ function readingLogToRow(log: ReadingLog): ReadingLogRow {
   };
 }
 
+function announcementToRow(announcement: Announcement): AnnouncementRow {
+  return {
+    id: announcement.id,
+    organization_id: announcement.organizationId,
+    title: announcement.title,
+    body: announcement.body,
+    updated_at: announcement.updatedAt,
+  };
+}
+
 async function ensureDefaultRemoteOrganization() {
   if (!supabase) return;
 
@@ -372,10 +408,12 @@ async function loadRemoteState(localState: AppState): Promise<AppState> {
   }
 
   let refreshedOrganizations = organizationRows;
-  const [{ data: organizationRowsWithTarget, error: refreshedOrganizationError }, { data: departmentRows }, logResult] = await Promise.all([
+  const [{ data: organizationRowsWithTarget, error: refreshedOrganizationError }, { data: departmentRows }, { data: memberRows }, logResult, announcementResult] = await Promise.all([
     supabase.from('organizations').select('id,name,invite_code,owner_name,created_at,target_metric').order('created_at', { ascending: true }),
     supabase.from('departments').select('id,organization_id,name,monthly_target_members'),
+    supabase.from('members').select('id,organization_id,department_id,name,role'),
     supabase.from('reading_logs').select('id,date,organization_id,department_id,member_id,member_name,read_chapters,passage,reflection').order('date', { ascending: false }),
+    supabase.from('announcements').select('id,organization_id,title,body,updated_at').order('updated_at', { ascending: false }),
   ]);
 
   if (!refreshedOrganizationError && organizationRowsWithTarget) {
@@ -390,6 +428,8 @@ async function loadRemoteState(localState: AppState): Promise<AppState> {
       .order('date', { ascending: false });
     logRows = (fallback.data ?? null) as ReadingLogRow[] | null;
   }
+
+  const announcementRows = announcementResult.error ? null : ((announcementResult.data ?? null) as AnnouncementRow[] | null);
 
   const remoteOrganizations = (refreshedOrganizations ?? organizationRows ?? []).map((organization) => ({
     id: organization.id,
@@ -410,6 +450,13 @@ async function loadRemoteState(localState: AppState): Promise<AppState> {
   return normalizeState({
     ...localState,
     organizations: remoteOrganizations.length > 0 ? remoteOrganizations : localState.organizations,
+    members: (memberRows ?? []).map((member) => ({
+      id: member.id,
+      organizationId: member.organization_id,
+      departmentId: member.department_id,
+      name: member.name,
+      role: member.role,
+    })),
     logs: (logRows ?? []).map((log) => ({
       id: log.id,
       date: log.date,
@@ -420,6 +467,13 @@ async function loadRemoteState(localState: AppState): Promise<AppState> {
       readChapters: normalizeReadChapters(log.read_chapters),
       passage: log.passage ?? undefined,
       reflection: log.reflection ?? undefined,
+    })),
+    announcements: (announcementRows ?? []).map((announcement) => ({
+      id: announcement.id,
+      organizationId: announcement.organization_id,
+      title: announcement.title,
+      body: announcement.body,
+      updatedAt: announcement.updated_at,
     })),
   });
 }
@@ -475,7 +529,17 @@ async function deleteRemoteOrganization(id: string, adminDeleteCode: string) {
   if (!supabase) return;
 
   const { error } = await supabase.functions.invoke('delete-organization', {
-    body: { organizationId: id },
+    body: { action: 'deleteOrganization', organizationId: id },
+    headers: { 'x-admin-delete-secret': adminDeleteCode },
+  });
+  if (error) throw error;
+}
+
+async function runRemoteAdminAction(action: string, payload: Record<string, unknown>, adminDeleteCode: string) {
+  if (!supabase) return;
+
+  const { error } = await supabase.functions.invoke('delete-organization', {
+    body: { action, ...payload },
     headers: { 'x-admin-delete-secret': adminDeleteCode },
   });
   if (error) throw error;
@@ -601,6 +665,14 @@ export default function App() {
   const [joinSelectionTouched, setJoinSelectionTouched] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState<NotificationState>('default');
   const [adminDeleteCode, setAdminDeleteCode] = useState('');
+  const [adminOrgName, setAdminOrgName] = useState('');
+  const [adminInviteCode, setAdminInviteCode] = useState('');
+  const [adminOwnerName, setAdminOwnerName] = useState('');
+  const [adminTargetMetric, setAdminTargetMetric] = useState<TargetMetric>('members');
+  const [announcementTitle, setAnnouncementTitle] = useState('');
+  const [announcementBody, setAnnouncementBody] = useState('');
+  const [newDepartmentName, setNewDepartmentName] = useState('');
+  const [newDepartmentTarget, setNewDepartmentTarget] = useState('300');
 
   useEffect(() => {
     let mounted = true;
@@ -691,6 +763,8 @@ export default function App() {
   const myDepartment = departments.find((department) => department.id === activeMember?.departmentId) ?? departments[0];
   const today = todayKey();
   const organizationLogs = state.logs.filter((log) => log.organizationId === currentOrganization.id);
+  const organizationMembers = state.members.filter((member) => member.organizationId === currentOrganization.id);
+  const currentAnnouncement = state.announcements.find((announcement) => announcement.organizationId === currentOrganization.id);
   const myLogs = activeMember ? organizationLogs.filter((log) => log.memberId === activeMember.id) : [];
   const checkedToday = activeMember ? organizationLogs.some((log) => log.date === today && log.memberId === activeMember.id) : false;
   const todayLog = activeMember ? organizationLogs.find((log) => log.date === today && log.memberId === activeMember.id) : undefined;
@@ -745,12 +819,22 @@ export default function App() {
   }, [checkedToday, myLogs]);
 
   const recentLogs = [...organizationLogs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+  const adminRecentLogs = [...organizationLogs].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 20);
   const todayReflections = organizationLogs
     .filter((log) => log.date === today && log.reflection?.trim())
     .sort((a, b) => b.id.localeCompare(a.id));
   const canDeleteSelectedLog = !!selectedLog && (selectedLog.memberId === activeMember?.id || (isReflectionAdmin && selectedLog.date === today && !!selectedLog.reflection?.trim()));
 
   const shareText = `[${MONTH_LABEL} 성경읽기 챌린지]\n${currentOrganization.name} ${myDepartment.name}는 현재 ${currentDepartmentStats.count} / ${myDepartment.monthlyTargetMembers}${targetUnit}입니다.\n전체는 ${totalCount} / ${totalTarget}${targetUnit}까지 채워졌어요.\n오늘도 말씀 읽기 인증으로 함께해요.`;
+
+  useEffect(() => {
+    setAdminOrgName(currentOrganization.name);
+    setAdminInviteCode(currentOrganization.inviteCode);
+    setAdminOwnerName(currentOrganization.ownerName);
+    setAdminTargetMetric(currentOrganization.targetMetric);
+    setAnnouncementTitle(currentAnnouncement?.title ?? '');
+    setAnnouncementBody(currentAnnouncement?.body ?? '');
+  }, [currentAnnouncement?.body, currentAnnouncement?.title, currentOrganization.id, currentOrganization.inviteCode, currentOrganization.name, currentOrganization.ownerName, currentOrganization.targetMetric]);
 
   const updateState = (next: Partial<AppState>) => setState((prev) => ({ ...prev, ...next }));
 
@@ -840,6 +924,7 @@ export default function App() {
 
     setState((prev) => ({
       ...prev,
+      members: [member, ...prev.members.filter((item) => item.id !== member.id)],
       currentOrganizationId: organization.id,
       currentMember: member,
     }));
@@ -982,6 +1067,206 @@ export default function App() {
         { text: '삭제', style: 'destructive', onPress: () => removeOrganization(organization) },
       ],
     );
+  };
+
+  const requireAdminCode = () => {
+    const code = adminDeleteCode.trim();
+    if (!code) {
+      Alert.alert('관리자 코드 필요', '관리자 코드를 입력해 주세요.');
+      return '';
+    }
+    return code;
+  };
+
+  const saveOrganizationSettings = async () => {
+    const code = requireAdminCode();
+    const name = adminOrgName.trim();
+    const inviteCode = adminInviteCode.trim();
+    const ownerName = adminOwnerName.trim();
+    if (!code || !name || !inviteCode || !ownerName) return;
+
+    const nextOrganization = {
+      ...currentOrganization,
+      name,
+      inviteCode,
+      ownerName,
+      targetMetric: adminTargetMetric,
+    };
+
+    try {
+      await runRemoteAdminAction('updateOrganization', { organization: organizationToRow(nextOrganization) }, code);
+    } catch {
+      Alert.alert('저장 실패', '단체 기본정보 저장에 실패했습니다.');
+      return;
+    }
+
+    setState((prev) => ({
+      ...prev,
+      organizations: prev.organizations.map((organization) => (organization.id === nextOrganization.id ? nextOrganization : organization)),
+    }));
+    Alert.alert('저장 완료', '단체 기본정보를 저장했습니다.');
+  };
+
+  const saveAnnouncement = async () => {
+    const code = requireAdminCode();
+    if (!code) return;
+
+    const announcement: Announcement = {
+      id: currentAnnouncement?.id ?? `${currentOrganization.id}-announcement`,
+      organizationId: currentOrganization.id,
+      title: announcementTitle.trim() || '오늘 공지',
+      body: announcementBody.trim(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await runRemoteAdminAction('upsertAnnouncement', { announcement: announcementToRow(announcement) }, code);
+    } catch {
+      Alert.alert('공지 저장 실패', '공지 저장에 실패했습니다.');
+      return;
+    }
+
+    setState((prev) => ({
+      ...prev,
+      announcements: [announcement, ...prev.announcements.filter((item) => item.organizationId !== currentOrganization.id)],
+    }));
+    Alert.alert('저장 완료', '홈 공지를 저장했습니다.');
+  };
+
+  const saveDepartment = async (department: Department) => {
+    const code = requireAdminCode();
+    if (!code) return;
+
+    try {
+      await runRemoteAdminAction('upsertDepartment', { department: departmentToRow(currentOrganization.id, department) }, code);
+    } catch {
+      Alert.alert('부서 저장 실패', '부서 정보를 저장하지 못했습니다.');
+      return;
+    }
+
+    Alert.alert('저장 완료', '부서 정보를 저장했습니다.');
+  };
+
+  const addAdminDepartment = async () => {
+    const code = requireAdminCode();
+    const name = newDepartmentName.trim();
+    const target = Math.max(1, Number(newDepartmentTarget) || 0);
+    if (!code || !name) return;
+
+    const department: Department = { id: makeId(), name, monthlyTargetMembers: target };
+
+    try {
+      await runRemoteAdminAction('upsertDepartment', { department: departmentToRow(currentOrganization.id, department) }, code);
+    } catch {
+      Alert.alert('부서 추가 실패', '부서를 추가하지 못했습니다.');
+      return;
+    }
+
+    setState((prev) => ({
+      ...prev,
+      organizations: prev.organizations.map((organization) => (
+        organization.id === currentOrganization.id
+          ? { ...organization, departments: [...organization.departments, department] }
+          : organization
+      )),
+    }));
+    setNewDepartmentName('');
+    setNewDepartmentTarget('300');
+  };
+
+  const removeDepartment = async (department: Department) => {
+    const code = requireAdminCode();
+    if (!code) return;
+    if (departments.length <= 1) {
+      Alert.alert('삭제 불가', '단체에는 최소 1개의 부서가 필요합니다.');
+      return;
+    }
+
+    try {
+      await runRemoteAdminAction('deleteDepartment', { departmentId: department.id }, code);
+    } catch {
+      Alert.alert('부서 삭제 실패', '부서를 삭제하지 못했습니다.');
+      return;
+    }
+
+    setState((prev) => ({
+      ...prev,
+      organizations: prev.organizations.map((organization) => (
+        organization.id === currentOrganization.id
+          ? { ...organization, departments: organization.departments.filter((item) => item.id !== department.id) }
+          : organization
+      )),
+      members: prev.members.filter((member) => member.departmentId !== department.id),
+      logs: prev.logs.filter((log) => log.departmentId !== department.id),
+      currentMember: prev.currentMember?.departmentId === department.id ? undefined : prev.currentMember,
+    }));
+  };
+
+  const saveMember = async (member: Member) => {
+    const code = requireAdminCode();
+    if (!code) return;
+
+    try {
+      await runRemoteAdminAction('updateMember', { member: memberToRow(member) }, code);
+    } catch {
+      Alert.alert('멤버 저장 실패', '멤버 정보를 저장하지 못했습니다.');
+      return;
+    }
+
+    setState((prev) => ({
+      ...prev,
+      logs: prev.logs.map((log) => (
+        log.memberId === member.id ? { ...log, memberName: member.name, departmentId: member.departmentId } : log
+      )),
+    }));
+    Alert.alert('저장 완료', '멤버 정보를 저장했습니다.');
+  };
+
+  const removeMember = async (member: Member) => {
+    const code = requireAdminCode();
+    if (!code) return;
+
+    try {
+      await runRemoteAdminAction('deleteMember', { memberId: member.id }, code);
+    } catch {
+      Alert.alert('멤버 삭제 실패', '멤버를 삭제하지 못했습니다.');
+      return;
+    }
+
+    setState((prev) => ({
+      ...prev,
+      members: prev.members.filter((item) => item.id !== member.id),
+      logs: prev.logs.filter((log) => log.memberId !== member.id),
+      currentMember: prev.currentMember?.id === member.id ? undefined : prev.currentMember,
+    }));
+  };
+
+  const saveAdminLog = async (log: ReadingLog) => {
+    const code = requireAdminCode();
+    if (!code) return;
+
+    try {
+      await runRemoteAdminAction('updateLog', { log: readingLogToRow(log) }, code);
+    } catch {
+      Alert.alert('인증 저장 실패', '인증 기록을 저장하지 못했습니다.');
+      return;
+    }
+
+    Alert.alert('저장 완료', '인증 기록을 저장했습니다.');
+  };
+
+  const removeAdminLog = async (log: ReadingLog) => {
+    const code = requireAdminCode();
+    if (!code) return;
+
+    try {
+      await runRemoteAdminAction('deleteLog', { logId: log.id }, code);
+    } catch {
+      Alert.alert('인증 삭제 실패', '인증 기록을 삭제하지 못했습니다.');
+      return;
+    }
+
+    setState((prev) => ({ ...prev, logs: prev.logs.filter((item) => item.id !== log.id) }));
   };
 
   const selectBibleBook = (book: { name: string; chapters: number }) => {
@@ -1239,6 +1524,13 @@ export default function App() {
           </View>
         </View>
       </View>
+
+      {currentAnnouncement?.body.trim() ? (
+        <View style={styles.noticeBand}>
+          <Text style={styles.noticeTitle}>{currentAnnouncement.title || '오늘 공지'}</Text>
+          <Text style={styles.noticeBody}>{currentAnnouncement.body}</Text>
+        </View>
+      ) : null}
 
       <View style={styles.summaryBand}>
         <StatTile label="내 이번 달 인증" value={`${myLogs.length}회`} helper={checkedToday ? '오늘 인증 완료' : '오늘 인증 전'} />
@@ -1567,20 +1859,227 @@ export default function App() {
   const SuperAdmin = () => (
     <ScrollView contentContainerStyle={[styles.scrollContent, isWide && styles.formScroll]}>
       <Text style={styles.eyebrow}>관리자</Text>
-      <Text style={[styles.title, isCompact && styles.titleCompact]}>단체 관리</Text>
-      <Text style={styles.subtitle}>권진호 관리자 계정에서만 보이는 화면입니다. 단체 삭제 시 부서, 가입자, 인증 기록이 함께 삭제됩니다.</Text>
+      <Text style={[styles.title, isCompact && styles.titleCompact]}>운영 관리</Text>
+      <Text style={styles.subtitle}>권진호 관리자 계정에서만 보이는 화면입니다. 관리자 코드 입력 후 단체, 부서, 가입자, 인증 기록, 홈 공지를 관리할 수 있습니다.</Text>
 
       <View style={styles.panel}>
-        <SectionHeader title="삭제 권한" action="필수" />
-        <Text style={styles.fieldLabel}>관리자 삭제 코드</Text>
+        <SectionHeader title="관리자 권한" action="필수" />
+        <Text style={styles.fieldLabel}>관리자 코드</Text>
         <TextInput
           value={adminDeleteCode}
           onChangeText={setAdminDeleteCode}
-          placeholder="Supabase ADMIN_DELETE_SECRET"
+          placeholder="관리자 코드 입력"
           placeholderTextColor="#8A969D"
           secureTextEntry
           style={styles.input}
         />
+      </View>
+
+      <View style={styles.summaryBand}>
+        <StatTile label="오늘 인증" value={`${organizationLogs.filter((log) => log.date === today).length}회`} />
+        <StatTile label="가입자" value={`${organizationMembers.length}명`} />
+        <StatTile label="부서" value={`${departments.length}개`} />
+        <StatTile label="전체 진행" value={`${totalCount}${targetUnit}`} helper={`${totalTarget}${targetUnit} 목표`} />
+      </View>
+
+      <View style={styles.panel}>
+        <SectionHeader title="홈 공지" action="첫 화면 노출" />
+        <Text style={styles.fieldLabel}>공지 제목</Text>
+        <TextInput value={announcementTitle} onChangeText={setAnnouncementTitle} placeholder="예) 오늘의 읽기 안내" placeholderTextColor="#8A969D" style={styles.input} />
+        <Text style={styles.fieldLabel}>공지 내용</Text>
+        <TextInput
+          value={announcementBody}
+          onChangeText={setAnnouncementBody}
+          placeholder="홈 화면에 표시할 공지를 입력하세요."
+          placeholderTextColor="#8A969D"
+          style={[styles.input, styles.textArea]}
+          multiline
+        />
+        <Pressable style={styles.primaryButton} onPress={saveAnnouncement}>
+          <Text style={styles.primaryButtonText}>공지 저장</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.panel}>
+        <SectionHeader title="현재 단체 기본정보" action={currentOrganization.name} />
+        <Text style={styles.fieldLabel}>단체명</Text>
+        <TextInput value={adminOrgName} onChangeText={setAdminOrgName} placeholder="단체명" placeholderTextColor="#8A969D" style={styles.input} />
+        <Text style={styles.fieldLabel}>초대코드</Text>
+        <TextInput value={adminInviteCode} onChangeText={setAdminInviteCode} placeholder="초대코드" placeholderTextColor="#8A969D" style={styles.input} />
+        <Text style={styles.fieldLabel}>단체장 이름</Text>
+        <TextInput value={adminOwnerName} onChangeText={setAdminOwnerName} placeholder="단체장 이름" placeholderTextColor="#8A969D" style={styles.input} />
+        <Text style={styles.fieldLabel}>월 목표 기준</Text>
+        <View style={styles.segmented}>
+          <Pressable style={[styles.segment, adminTargetMetric === 'members' && styles.segmentActive]} onPress={() => setAdminTargetMetric('members')}>
+            <Text style={[styles.segmentText, adminTargetMetric === 'members' && styles.segmentTextActive]}>인원수</Text>
+          </Pressable>
+          <Pressable style={[styles.segment, adminTargetMetric === 'chapters' && styles.segmentActive]} onPress={() => setAdminTargetMetric('chapters')}>
+            <Text style={[styles.segmentText, adminTargetMetric === 'chapters' && styles.segmentTextActive]}>장수</Text>
+          </Pressable>
+        </View>
+        <Pressable style={styles.primaryButton} onPress={saveOrganizationSettings}>
+          <Text style={styles.primaryButtonText}>단체 정보 저장</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.panel}>
+        <SectionHeader title="부서 관리" action={`월 목표 ${targetNoun}`} />
+        {departments.map((department) => (
+          <View key={department.id} style={styles.adminOrganizationItem}>
+            <View style={styles.adminEditRow}>
+              <TextInput
+                value={department.name}
+                onChangeText={(name) => setState((prev) => ({
+                  ...prev,
+                  organizations: prev.organizations.map((organization) => (
+                    organization.id === currentOrganization.id
+                      ? { ...organization, departments: organization.departments.map((item) => (item.id === department.id ? { ...item, name } : item)) }
+                      : organization
+                  )),
+                }))}
+                placeholder="부서명"
+                placeholderTextColor="#8A969D"
+                style={[styles.input, styles.adminNameInput]}
+              />
+              <TextInput
+                value={String(department.monthlyTargetMembers)}
+                onChangeText={(monthlyTargetMembers) => setState((prev) => ({
+                  ...prev,
+                  organizations: prev.organizations.map((organization) => (
+                    organization.id === currentOrganization.id
+                      ? {
+                        ...organization,
+                        departments: organization.departments.map((item) => (
+                          item.id === department.id ? { ...item, monthlyTargetMembers: Math.max(1, Number(monthlyTargetMembers.replace(/[^0-9]/g, '')) || 1) } : item
+                        )),
+                      }
+                      : organization
+                  )),
+                }))}
+                keyboardType="number-pad"
+                placeholder="목표"
+                placeholderTextColor="#8A969D"
+                style={[styles.input, styles.adminTargetInput]}
+              />
+            </View>
+            <View style={styles.adminActionRow}>
+              <Pressable style={styles.secondaryButton} onPress={() => saveDepartment(department)}>
+                <Text style={styles.secondaryButtonText}>저장</Text>
+              </Pressable>
+              <Pressable style={styles.deleteButton} onPress={() => removeDepartment(department)}>
+                <Text style={styles.deleteButtonText}>삭제</Text>
+              </Pressable>
+            </View>
+          </View>
+        ))}
+        <View style={styles.adminEditRow}>
+          <TextInput value={newDepartmentName} onChangeText={setNewDepartmentName} placeholder="새 부서명" placeholderTextColor="#8A969D" style={[styles.input, styles.adminNameInput]} />
+          <TextInput value={newDepartmentTarget} onChangeText={(value) => setNewDepartmentTarget(value.replace(/[^0-9]/g, ''))} keyboardType="number-pad" placeholder="목표" placeholderTextColor="#8A969D" style={[styles.input, styles.adminTargetInput]} />
+        </View>
+        <Pressable style={styles.primaryButton} onPress={addAdminDepartment}>
+          <Text style={styles.primaryButtonText}>부서 추가</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.panel}>
+        <SectionHeader title="가입자 관리" action={`${organizationMembers.length}명`} />
+        {organizationMembers.length === 0 ? (
+          <Text style={styles.emptyText}>가입자가 없습니다.</Text>
+        ) : (
+          organizationMembers.map((member) => (
+            <View key={member.id} style={styles.adminOrganizationItem}>
+              <TextInput
+                value={member.name}
+                onChangeText={(name) => setState((prev) => ({
+                  ...prev,
+                  members: prev.members.map((item) => (item.id === member.id ? { ...item, name } : item)),
+                  currentMember: prev.currentMember?.id === member.id ? { ...prev.currentMember, name } : prev.currentMember,
+                }))}
+                placeholder="이름"
+                placeholderTextColor="#8A969D"
+                style={styles.input}
+              />
+              <View style={styles.segmentedWrap}>
+                {departments.map((department) => (
+                  <Pressable
+                    key={`${member.id}-${department.id}`}
+                    style={[styles.segment, styles.segmentWrapItem, member.departmentId === department.id && styles.segmentActive]}
+                    onPress={() => setState((prev) => ({
+                      ...prev,
+                      members: prev.members.map((item) => (item.id === member.id ? { ...item, departmentId: department.id } : item)),
+                      currentMember: prev.currentMember?.id === member.id ? { ...prev.currentMember, departmentId: department.id } : prev.currentMember,
+                    }))}
+                  >
+                    <Text style={[styles.segmentText, member.departmentId === department.id && styles.segmentTextActive]}>{department.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <View style={styles.adminActionRow}>
+                <Pressable style={styles.secondaryButton} onPress={() => saveMember(member)}>
+                  <Text style={styles.secondaryButtonText}>저장</Text>
+                </Pressable>
+                <Pressable style={styles.deleteButton} onPress={() => removeMember(member)}>
+                  <Text style={styles.deleteButtonText}>삭제</Text>
+                </Pressable>
+              </View>
+            </View>
+          ))
+        )}
+      </View>
+
+      <View style={styles.panel}>
+        <SectionHeader title="최근 인증 관리" action="최근 20개" />
+        {adminRecentLogs.length === 0 ? (
+          <Text style={styles.emptyText}>인증 기록이 없습니다.</Text>
+        ) : (
+          adminRecentLogs.map((log) => (
+            <View key={log.id} style={styles.adminOrganizationItem}>
+              <Text style={styles.feedTitle}>{formatDate(log.date)} · {log.memberName}</Text>
+              <TextInput
+                value={log.passage ?? ''}
+                onChangeText={(passageText) => setState((prev) => ({
+                  ...prev,
+                  logs: prev.logs.map((item) => (item.id === log.id ? { ...item, passage: passageText } : item)),
+                }))}
+                placeholder="읽은 본문"
+                placeholderTextColor="#8A969D"
+                style={styles.input}
+              />
+              {currentOrganization.targetMetric === 'chapters' ? (
+                <TextInput
+                  value={String(normalizeReadChapters(log.readChapters))}
+                  onChangeText={(value) => setState((prev) => ({
+                    ...prev,
+                    logs: prev.logs.map((item) => (item.id === log.id ? { ...item, readChapters: normalizeReadChapters(value) } : item)),
+                  }))}
+                  keyboardType="number-pad"
+                  placeholder="읽은 장수"
+                  placeholderTextColor="#8A969D"
+                  style={[styles.input, styles.readChaptersInput]}
+                />
+              ) : null}
+              <TextInput
+                value={log.reflection ?? ''}
+                onChangeText={(reflectionText) => setState((prev) => ({
+                  ...prev,
+                  logs: prev.logs.map((item) => (item.id === log.id ? { ...item, reflection: reflectionText } : item)),
+                }))}
+                placeholder="묵상글"
+                placeholderTextColor="#8A969D"
+                style={[styles.input, styles.textArea]}
+                multiline
+              />
+              <View style={styles.adminActionRow}>
+                <Pressable style={styles.secondaryButton} onPress={() => saveAdminLog(log)}>
+                  <Text style={styles.secondaryButtonText}>저장</Text>
+                </Pressable>
+                <Pressable style={styles.deleteButton} onPress={() => removeAdminLog(log)}>
+                  <Text style={styles.deleteButtonText}>삭제</Text>
+                </Pressable>
+              </View>
+            </View>
+          ))
+        )}
       </View>
 
       <View style={styles.panel}>
@@ -1914,6 +2413,16 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#D8E8F0',
   },
+  noticeBand: {
+    backgroundColor: '#EAF7FE',
+    borderLeftWidth: 4,
+    borderLeftColor: '#2F9FDB',
+    borderRadius: 8,
+    padding: 16,
+    marginTop: 14,
+  },
+  noticeTitle: { color: '#15516F', fontSize: 15, fontWeight: '900' },
+  noticeBody: { color: '#263F4D', fontSize: 14, fontWeight: '700', lineHeight: 22, marginTop: 7 },
   statGridCompact: { flexDirection: 'row', gap: 10, marginTop: 20, marginBottom: 14 },
   statTile: { flex: 1, minWidth: 150, backgroundColor: '#FFFFFF', borderRadius: 8, padding: 17, shadowColor: '#1E4E66', shadowOpacity: 0.05, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 2 },
   statLabel: { color: '#667A86', fontSize: 12, fontWeight: '800' },
@@ -2001,6 +2510,10 @@ const styles = StyleSheet.create({
   recordTitle: { color: '#142A36', fontSize: 15, fontWeight: '900' },
   recordReflection: { color: '#657B87', fontSize: 13, lineHeight: 19, marginTop: 4 },
   adminOrganizationItem: { paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#E5EEF3' },
+  adminEditRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 8 },
+  adminActionRow: { flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'flex-end', marginTop: 10 },
+  adminNameInput: { flex: 1, minWidth: 180 },
+  adminTargetInput: { width: 110 },
   deleteButton: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, backgroundColor: '#F7E7E4' },
   deleteButtonText: { color: '#A14435', fontSize: 12, fontWeight: '900' },
   emptyText: { color: '#657B87', fontSize: 14, fontWeight: '700', paddingVertical: 20 },
