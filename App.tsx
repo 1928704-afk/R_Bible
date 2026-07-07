@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
-type Tab = 'dashboard' | 'check' | 'departments' | 'records' | 'admin';
+type Tab = 'dashboard' | 'check' | 'departments' | 'records' | 'admin' | 'superAdmin';
 
 type OrganizationId = string;
 type DepartmentId = string;
@@ -471,6 +471,16 @@ async function deleteRemoteReadingLog(id: string) {
   if (error) throw error;
 }
 
+async function deleteRemoteOrganization(id: string, adminDeleteCode: string) {
+  if (!supabase) return;
+
+  const { error } = await supabase.functions.invoke('delete-organization', {
+    body: { organizationId: id },
+    headers: { 'x-admin-delete-secret': adminDeleteCode },
+  });
+  if (error) throw error;
+}
+
 async function saveRemotePushSubscription(member: Member, subscription: PushSubscription) {
   if (!supabase) return;
 
@@ -590,6 +600,7 @@ export default function App() {
   const [joinMemberName, setJoinMemberName] = useState('');
   const [joinSelectionTouched, setJoinSelectionTouched] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState<NotificationState>('default');
+  const [adminDeleteCode, setAdminDeleteCode] = useState('');
 
   useEffect(() => {
     let mounted = true;
@@ -684,6 +695,7 @@ export default function App() {
   const checkedToday = activeMember ? organizationLogs.some((log) => log.date === today && log.memberId === activeMember.id) : false;
   const todayLog = activeMember ? organizationLogs.find((log) => log.date === today && log.memberId === activeMember.id) : undefined;
   const isReflectionAdmin = activeMember?.name.trim() === '권진호';
+  const isAppAdmin = isReflectionAdmin;
   const selectedBibleBook = bibleBooks.find((book) => passage.startsWith(book.name));
   const selectedChapter = Number(passage.match(/(\d+)장/)?.[1] ?? 0) || null;
   const totalTarget = departments.reduce((sum, department) => sum + department.monthlyTargetMembers, 0);
@@ -910,6 +922,68 @@ export default function App() {
     );
   };
 
+  const removeOrganization = async (organization: Organization) => {
+    if (!isAppAdmin) return;
+    const deleteCode = adminDeleteCode.trim();
+
+    if (!deleteCode) {
+      Alert.alert('삭제 코드 필요', '관리자 삭제 코드를 입력해 주세요.');
+      return;
+    }
+
+    try {
+      await deleteRemoteOrganization(organization.id, deleteCode);
+    } catch {
+      Alert.alert('단체 삭제 실패', '관리자 삭제 코드 또는 delete-organization Edge Function 설정을 확인해 주세요.');
+      return;
+    }
+
+    setState((prev) => {
+      const nextOrganizations = prev.organizations.filter((item) => item.id !== organization.id);
+      const nextCurrentOrganization = nextOrganizations[0];
+      const shouldClearMember = prev.currentMember?.organizationId === organization.id;
+
+      return {
+        ...prev,
+        organizations: nextOrganizations,
+        currentOrganizationId: shouldClearMember
+          ? nextCurrentOrganization?.id
+          : prev.currentOrganizationId === organization.id
+            ? nextCurrentOrganization?.id
+            : prev.currentOrganizationId,
+        currentMember: shouldClearMember ? undefined : prev.currentMember,
+        logs: prev.logs.filter((log) => log.organizationId !== organization.id),
+      };
+    });
+
+    if (currentOrganization.id === organization.id) {
+      setTab('dashboard');
+    }
+  };
+
+  const confirmRemoveOrganization = (organization: Organization) => {
+    if (!isAppAdmin) return;
+
+    const message = `${organization.name} 단체와 연결된 부서, 멤버, 인증 기록을 모두 삭제할까요?`;
+
+    if (Platform.OS === 'web') {
+      const confirmed = (globalThis as unknown as { confirm?: (text: string) => boolean }).confirm?.(message) ?? false;
+      if (confirmed) {
+        void removeOrganization(organization);
+      }
+      return;
+    }
+
+    Alert.alert(
+      '단체 삭제',
+      message,
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '삭제', style: 'destructive', onPress: () => removeOrganization(organization) },
+      ],
+    );
+  };
+
   const selectBibleBook = (book: { name: string; chapters: number }) => {
     setPassage((prev) => {
       const chapterPart = prev.match(/\d.*$/)?.[0]?.trim();
@@ -1011,6 +1085,12 @@ export default function App() {
     subscribed: '이 기기는 리마인드 알림 수신 대상으로 저장되었습니다.',
     'missing-key': 'Cloudflare Pages에 EXPO_PUBLIC_VAPID_PUBLIC_KEY 환경 변수를 추가해야 합니다.',
   }[notificationStatus];
+
+  useEffect(() => {
+    if (tab === 'superAdmin' && !isAppAdmin) {
+      setTab('dashboard');
+    }
+  }, [isAppAdmin, tab]);
 
   const Onboarding = () => {
     const selectedJoinOrganization = state.organizations.find((organization) => organization.id === joinOrganizationId) ?? state.organizations[0];
@@ -1484,7 +1564,67 @@ export default function App() {
     </ScrollView>
   );
 
-  const content = tab === 'dashboard' ? Dashboard() : tab === 'check' ? Check() : tab === 'departments' ? TodayReflections() : tab === 'records' ? Records() : Admin();
+  const SuperAdmin = () => (
+    <ScrollView contentContainerStyle={[styles.scrollContent, isWide && styles.formScroll]}>
+      <Text style={styles.eyebrow}>관리자</Text>
+      <Text style={[styles.title, isCompact && styles.titleCompact]}>단체 관리</Text>
+      <Text style={styles.subtitle}>권진호 관리자 계정에서만 보이는 화면입니다. 단체 삭제 시 부서, 가입자, 인증 기록이 함께 삭제됩니다.</Text>
+
+      <View style={styles.panel}>
+        <SectionHeader title="삭제 권한" action="필수" />
+        <Text style={styles.fieldLabel}>관리자 삭제 코드</Text>
+        <TextInput
+          value={adminDeleteCode}
+          onChangeText={setAdminDeleteCode}
+          placeholder="Supabase ADMIN_DELETE_SECRET"
+          placeholderTextColor="#8A969D"
+          secureTextEntry
+          style={styles.input}
+        />
+      </View>
+
+      <View style={styles.panel}>
+        <SectionHeader title="단체 목록" action={`${state.organizations.length}개`} />
+        {state.organizations.length === 0 ? (
+          <Text style={styles.emptyText}>등록된 단체가 없습니다.</Text>
+        ) : (
+          state.organizations.map((organization) => {
+            const logCount = state.logs.filter((log) => log.organizationId === organization.id).length;
+            const metricLabel = organization.targetMetric === 'chapters' ? '장수' : '인원수';
+
+            return (
+              <View key={organization.id} style={styles.adminOrganizationItem}>
+                <View style={styles.cardHeaderRow}>
+                  <View style={styles.feedBody}>
+                    <Text style={styles.feedTitle}>{organization.name}</Text>
+                    <Text style={styles.feedMeta}>
+                      부서 {organization.departments.length}개 · 목표 기준 {metricLabel} · 인증 {logCount}개
+                    </Text>
+                    <Text style={styles.mutedText}>초대코드 {organization.inviteCode}</Text>
+                  </View>
+                  <Pressable style={styles.deleteButton} onPress={() => confirmRemoveOrganization(organization)}>
+                    <Text style={styles.deleteButtonText}>단체 삭제</Text>
+                  </Pressable>
+                </View>
+              </View>
+            );
+          })
+        )}
+      </View>
+    </ScrollView>
+  );
+
+  const content = tab === 'dashboard'
+    ? Dashboard()
+    : tab === 'check'
+      ? Check()
+      : tab === 'departments'
+        ? TodayReflections()
+        : tab === 'records'
+          ? Records()
+          : tab === 'superAdmin'
+            ? SuperAdmin()
+            : Admin();
 
   const navItems: Array<{ key: Tab; label: string; short: string; icon: string }> = [
     { key: 'dashboard', label: '대시보드', short: '홈', icon: '⌂' },
@@ -1492,6 +1632,7 @@ export default function App() {
     { key: 'departments', label: '오늘의 묵상글', short: '묵상', icon: '▦' },
     { key: 'records', label: '내 기록', short: '기록', icon: '◷' },
     { key: 'admin', label: '운영 설정', short: '설정', icon: '⋯' },
+    ...(isAppAdmin ? [{ key: 'superAdmin' as const, label: '관리자', short: '관리', icon: '!' }] : []),
   ];
 
   return (
@@ -1859,6 +2000,7 @@ const styles = StyleSheet.create({
   recordBody: { flex: 1, minWidth: 0 },
   recordTitle: { color: '#142A36', fontSize: 15, fontWeight: '900' },
   recordReflection: { color: '#657B87', fontSize: 13, lineHeight: 19, marginTop: 4 },
+  adminOrganizationItem: { paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#E5EEF3' },
   deleteButton: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, backgroundColor: '#F7E7E4' },
   deleteButtonText: { color: '#A14435', fontSize: 12, fontWeight: '900' },
   emptyText: { color: '#657B87', fontSize: 14, fontWeight: '700', paddingVertical: 20 },
