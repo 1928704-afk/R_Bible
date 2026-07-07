@@ -30,6 +30,7 @@ create table if not exists public.reading_logs (
   member_id text not null references public.members(id) on delete cascade,
   member_name text not null,
   date date not null,
+  read_chapters integer not null default 1 check (read_chapters > 0),
   passage text,
   reflection text,
   created_at timestamptz not null default now()
@@ -49,6 +50,9 @@ create table if not exists public.push_subscriptions (
 
 alter table public.organizations
   add column if not exists target_metric text not null default 'members' check (target_metric in ('members', 'chapters'));
+
+alter table public.reading_logs
+  add column if not exists read_chapters integer not null default 1 check (read_chapters > 0);
 
 create index if not exists departments_organization_id_idx on public.departments(organization_id);
 create index if not exists members_organization_id_idx on public.members(organization_id);

@@ -56,6 +56,7 @@ type ReadingLog = {
   departmentId: DepartmentId;
   memberId: MemberId;
   memberName: string;
+  readChapters?: number;
   passage?: string;
   reflection?: string;
 };
@@ -132,6 +133,7 @@ type ReadingLogRow = {
   department_id: string;
   member_id: string;
   member_name: string;
+  read_chapters?: number | null;
   passage?: string | null;
   reflection?: string | null;
 };
@@ -240,6 +242,10 @@ function normalizeTargetMetric(value: unknown): TargetMetric {
   return value === 'chapters' ? 'chapters' : 'members';
 }
 
+function normalizeReadChapters(value: unknown) {
+  return Math.max(1, Math.min(200, Number(value) || 1));
+}
+
 function normalizeState(parsed: Partial<AppState>): AppState {
   const organizations = Array.isArray(parsed.organizations) && parsed.organizations.length > 0
     ? parsed.organizations.map((organization) => ({
@@ -276,6 +282,7 @@ function normalizeState(parsed: Partial<AppState>): AppState {
         ...log,
         organizationId: log.organizationId ?? fallbackOrganization.id,
         memberId: log.memberId ?? makeId(),
+        readChapters: normalizeReadChapters(log.readChapters),
       }))
       : initialState.logs,
   };
@@ -319,6 +326,7 @@ function readingLogToRow(log: ReadingLog): ReadingLogRow {
     department_id: log.departmentId,
     member_id: log.memberId,
     member_name: log.memberName,
+    read_chapters: normalizeReadChapters(log.readChapters),
     passage: log.passage ?? null,
     reflection: log.reflection ?? null,
   };
@@ -364,14 +372,23 @@ async function loadRemoteState(localState: AppState): Promise<AppState> {
   }
 
   let refreshedOrganizations = organizationRows;
-  const [{ data: organizationRowsWithTarget, error: refreshedOrganizationError }, { data: departmentRows }, { data: logRows }] = await Promise.all([
+  const [{ data: organizationRowsWithTarget, error: refreshedOrganizationError }, { data: departmentRows }, logResult] = await Promise.all([
     supabase.from('organizations').select('id,name,invite_code,owner_name,created_at,target_metric').order('created_at', { ascending: true }),
     supabase.from('departments').select('id,organization_id,name,monthly_target_members'),
-    supabase.from('reading_logs').select('id,date,organization_id,department_id,member_id,member_name,passage,reflection').order('date', { ascending: false }),
+    supabase.from('reading_logs').select('id,date,organization_id,department_id,member_id,member_name,read_chapters,passage,reflection').order('date', { ascending: false }),
   ]);
 
   if (!refreshedOrganizationError && organizationRowsWithTarget) {
     refreshedOrganizations = organizationRowsWithTarget;
+  }
+
+  let logRows = (logResult.data ?? null) as ReadingLogRow[] | null;
+  if (logResult.error) {
+    const fallback = await supabase
+      .from('reading_logs')
+      .select('id,date,organization_id,department_id,member_id,member_name,passage,reflection')
+      .order('date', { ascending: false });
+    logRows = (fallback.data ?? null) as ReadingLogRow[] | null;
   }
 
   const remoteOrganizations = (refreshedOrganizations ?? organizationRows ?? []).map((organization) => ({
@@ -400,6 +417,7 @@ async function loadRemoteState(localState: AppState): Promise<AppState> {
       departmentId: log.department_id,
       memberId: log.member_id,
       memberName: log.member_name,
+      readChapters: normalizeReadChapters(log.read_chapters),
       passage: log.passage ?? undefined,
       reflection: log.reflection ?? undefined,
     })),
@@ -435,7 +453,14 @@ async function saveRemoteMember(member: Member) {
 async function saveRemoteReadingLog(log: ReadingLog) {
   if (!supabase) return;
 
-  const { error } = await supabase.from('reading_logs').insert(readingLogToRow(log));
+  const logRow = readingLogToRow(log);
+  let { error } = await supabase.from('reading_logs').insert(logRow);
+  if (error && String(error.message ?? '').includes('read_chapters')) {
+    const fallbackRow = { ...logRow };
+    delete fallbackRow.read_chapters;
+    const fallback = await supabase.from('reading_logs').insert(fallbackRow);
+    error = fallback.error;
+  }
   if (error) throw error;
 }
 
@@ -545,6 +570,7 @@ export default function App() {
   const [state, setState] = useState<AppState>(initialState);
   const [hydrated, setHydrated] = useState(false);
   const [passage, setPassage] = useState('');
+  const [readChapters, setReadChapters] = useState('1');
   const [reflection, setReflection] = useState('');
   const [completedModal, setCompletedModal] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -666,7 +692,9 @@ export default function App() {
     () =>
       departments.map((department) => {
         const departmentLogs = organizationLogs.filter((log) => log.departmentId === department.id);
-        const count = departmentLogs.length;
+        const count = currentOrganization.targetMetric === 'chapters'
+          ? departmentLogs.reduce((sum, log) => sum + normalizeReadChapters(log.readChapters), 0)
+          : departmentLogs.length;
         return {
           ...department,
           count,
@@ -675,16 +703,19 @@ export default function App() {
           participants: new Set(departmentLogs.map((log) => log.memberId)).size,
         };
       }),
-    [departments, organizationLogs],
+    [currentOrganization.targetMetric, departments, organizationLogs],
   );
 
   const currentDepartmentStats = departmentStats.find((department) => department.id === myDepartment.id) ?? departmentStats[0];
   const totalCount = departmentStats.reduce((sum, department) => sum + department.count, 0);
-  const weeklyCount = organizationLogs.filter((log) => {
+  const weeklyLogs = organizationLogs.filter((log) => {
     const time = new Date(log.date).getTime();
     const diff = Date.now() - time;
     return diff >= 0 && diff <= 1000 * 60 * 60 * 24 * 7;
-  }).length;
+  });
+  const weeklyCount = currentOrganization.targetMetric === 'chapters'
+    ? weeklyLogs.reduce((sum, log) => sum + normalizeReadChapters(log.readChapters), 0)
+    : weeklyLogs.length;
 
   const currentStreak = useMemo(() => {
     const dateSet = new Set(myLogs.map((log) => log.date));
@@ -813,6 +844,7 @@ export default function App() {
 
     const trimmedPassage = passage.trim();
     const trimmedReflection = reflection.trim();
+    const nextReadChapters = currentOrganization.targetMetric === 'chapters' ? normalizeReadChapters(readChapters) : 1;
     const nextLog: ReadingLog = {
       id: makeId(),
       date: today,
@@ -820,6 +852,7 @@ export default function App() {
       departmentId: activeMember.departmentId,
       memberId: activeMember.id,
       memberName: activeMember.name.trim() || '이름 없음',
+      readChapters: nextReadChapters,
       passage: trimmedPassage || undefined,
       reflection: trimmedReflection || undefined,
     };
@@ -839,6 +872,7 @@ export default function App() {
       ],
     }));
     setPassage('');
+    setReadChapters('1');
     setReflection('');
     setCompletedModal(true);
   };
@@ -1166,9 +1200,14 @@ export default function App() {
                 </View>
                 <View style={styles.feedBody}>
                   <Text style={styles.feedTitle}>{log.memberName} · {departments.find((department) => department.id === log.departmentId)?.name}</Text>
-                  <Text style={styles.feedMeta}>{formatDate(log.date)} · {log.passage ?? '성경 읽기 인증'}</Text>
+                  <Text style={styles.feedMeta}>
+                    {formatDate(log.date)} · {log.passage ?? '성경 읽기 인증'}
+                    {currentOrganization.targetMetric === 'chapters' ? ` · ${normalizeReadChapters(log.readChapters)}장` : ''}
+                  </Text>
                 </View>
-                <Text style={styles.logBadge}>+1</Text>
+                <Text style={styles.logBadge}>
+                  +{currentOrganization.targetMetric === 'chapters' ? normalizeReadChapters(log.readChapters) : 1}
+                </Text>
               </View>
             ))
           )}
@@ -1192,7 +1231,11 @@ export default function App() {
         {checkedToday && todayLog ? (
           <View style={styles.doneBox}>
             <Text style={styles.doneTitle}>오늘 인증이 저장되어 있습니다.</Text>
-            <Text style={styles.doneText}>{todayLog.passage ?? '성경 읽기 인증'}{todayLog.reflection ? ` · ${todayLog.reflection}` : ''}</Text>
+            <Text style={styles.doneText}>
+              {todayLog.passage ?? '성경 읽기 인증'}
+              {currentOrganization.targetMetric === 'chapters' ? ` · ${normalizeReadChapters(todayLog.readChapters)}장` : ''}
+              {todayLog.reflection ? ` · ${todayLog.reflection}` : ''}
+            </Text>
           </View>
         ) : null}
 
@@ -1235,6 +1278,31 @@ export default function App() {
         </View>
         <TextInput value={passage} onChangeText={setPassage} placeholder="예) 요한복음 3장" placeholderTextColor="#8A969D" style={styles.input} />
 
+        {currentOrganization.targetMetric === 'chapters' ? (
+          <View>
+            <Text style={styles.fieldLabel}>오늘 읽은 장수</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chapterList}>
+              {Array.from({ length: 10 }, (_, index) => index + 1).map((count) => (
+                <Pressable
+                  key={`read-chapters-${count}`}
+                  style={[styles.chapterChip, Number(readChapters) === count && styles.chapterChipActive]}
+                  onPress={() => setReadChapters(String(count))}
+                >
+                  <Text style={[styles.chapterChipText, Number(readChapters) === count && styles.chapterChipTextActive]}>{count}장</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+            <TextInput
+              value={readChapters}
+              onChangeText={(value) => setReadChapters(value.replace(/[^0-9]/g, ''))}
+              placeholder="오늘 읽은 장수 입력"
+              placeholderTextColor="#8A969D"
+              keyboardType="number-pad"
+              style={[styles.input, styles.readChaptersInput]}
+            />
+          </View>
+        ) : null}
+
         <Text style={styles.fieldLabel}>한 줄 묵상(선택)</Text>
         <TextInput
           value={reflection}
@@ -1276,7 +1344,10 @@ export default function App() {
               <View style={styles.cardHeaderRow}>
                 <View style={styles.feedBody}>
                   <Text style={styles.feedTitle}>{log.memberName} · {departments.find((department) => department.id === log.departmentId)?.name}</Text>
-                  <Text style={styles.feedMeta}>{log.passage ?? '성경 읽기 인증'}</Text>
+                  <Text style={styles.feedMeta}>
+                    {log.passage ?? '성경 읽기 인증'}
+                    {currentOrganization.targetMetric === 'chapters' ? ` · ${normalizeReadChapters(log.readChapters)}장` : ''}
+                  </Text>
                 </View>
                 {isReflectionAdmin ? (
                   <Pressable
@@ -1325,7 +1396,10 @@ export default function App() {
                 <Text style={styles.recordDate}>{formatDate(log.date)}</Text>
               </View>
               <View style={styles.recordBody}>
-                <Text style={styles.recordTitle}>{log.passage ?? '성경 읽기 인증'}</Text>
+                <Text style={styles.recordTitle}>
+                  {log.passage ?? '성경 읽기 인증'}
+                  {currentOrganization.targetMetric === 'chapters' ? ` · ${normalizeReadChapters(log.readChapters)}장` : ''}
+                </Text>
                 {log.reflection ? <Text numberOfLines={2} style={styles.recordReflection}>{log.reflection}</Text> : null}
               </View>
               <Pressable
@@ -1521,6 +1595,12 @@ export default function App() {
             <ScrollView style={styles.recordModalScroll} contentContainerStyle={styles.recordModalContent}>
               <Text style={styles.recordDetailLabel}>읽은 본문</Text>
               <Text style={styles.recordDetailTitle}>{selectedLog?.passage ?? '성경 읽기 인증'}</Text>
+              {currentOrganization.targetMetric === 'chapters' ? (
+                <>
+                  <Text style={styles.recordDetailLabel}>읽은 장수</Text>
+                  <Text style={styles.recordDetailText}>{normalizeReadChapters(selectedLog?.readChapters)}장</Text>
+                </>
+              ) : null}
               <Text style={styles.recordDetailLabel}>묵상글</Text>
               <Text style={styles.recordDetailText}>{selectedLog?.reflection?.trim() || '작성된 묵상글이 없습니다.'}</Text>
             </ScrollView>
@@ -1762,6 +1842,7 @@ const styles = StyleSheet.create({
   chapterEmptyBox: { minHeight: 44, borderRadius: 8, backgroundColor: '#F3FAFE', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
   chapterEmptyText: { color: '#718692', fontSize: 13, fontWeight: '800' },
   input: { minHeight: 52, borderWidth: 1, borderColor: '#D7E7EF', backgroundColor: '#FFFFFF', borderRadius: 8, paddingHorizontal: 13, color: '#163140', fontSize: 15 },
+  readChaptersInput: { marginTop: 10 },
   textArea: { minHeight: 96, paddingTop: 13, textAlignVertical: 'top' },
   overallCard: { backgroundColor: '#FFFFFF', borderRadius: 8, padding: 18, marginTop: 20, shadowColor: '#1E4E66', shadowOpacity: 0.05, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 2 },
   departmentGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 14 },
