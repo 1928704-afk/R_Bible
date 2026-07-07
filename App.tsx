@@ -23,6 +23,7 @@ type Tab = 'dashboard' | 'check' | 'departments' | 'records' | 'admin';
 type OrganizationId = string;
 type DepartmentId = string;
 type MemberId = string;
+type TargetMetric = 'members' | 'chapters';
 
 type Department = {
   id: DepartmentId;
@@ -36,6 +37,7 @@ type Organization = {
   inviteCode: string;
   ownerName: string;
   createdAt: string;
+  targetMetric: TargetMetric;
   departments: Department[];
 };
 
@@ -81,6 +83,7 @@ const sampleOrganization: Organization = {
   inviteCode: 'BUSAN-YOUTH-2026',
   ownerName: '단체장',
   createdAt: '2026-07-01',
+  targetMetric: 'members',
   departments: [
     { id: 'dept-covenant', name: '언약부', monthlyTargetMembers: 300 },
     { id: 'dept-wheat', name: '밀알부', monthlyTargetMembers: 300 },
@@ -104,6 +107,7 @@ type OrganizationRow = {
   invite_code: string;
   owner_name: string;
   created_at: string;
+  target_metric?: string | null;
 };
 
 type DepartmentRow = {
@@ -232,10 +236,15 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
+function normalizeTargetMetric(value: unknown): TargetMetric {
+  return value === 'chapters' ? 'chapters' : 'members';
+}
+
 function normalizeState(parsed: Partial<AppState>): AppState {
   const organizations = Array.isArray(parsed.organizations) && parsed.organizations.length > 0
     ? parsed.organizations.map((organization) => ({
       ...organization,
+      targetMetric: normalizeTargetMetric(organization.targetMetric),
       departments: Array.isArray(organization.departments)
         ? organization.departments.map((department) => ({
           ...department,
@@ -279,6 +288,7 @@ function organizationToRow(organization: Organization): OrganizationRow {
     invite_code: organization.inviteCode,
     owner_name: organization.ownerName,
     created_at: organization.createdAt,
+    target_metric: organization.targetMetric,
   };
 }
 
@@ -317,7 +327,13 @@ function readingLogToRow(log: ReadingLog): ReadingLogRow {
 async function ensureDefaultRemoteOrganization() {
   if (!supabase) return;
 
-  await supabase.from('organizations').upsert(organizationToRow(sampleOrganization), { onConflict: 'id' });
+  const organizationRow = organizationToRow(sampleOrganization);
+  const { error: organizationError } = await supabase.from('organizations').upsert(organizationRow, { onConflict: 'id' });
+  if (organizationError && String(organizationError.message ?? '').includes('target_metric')) {
+    const fallbackRow = { ...organizationRow };
+    delete fallbackRow.target_metric;
+    await supabase.from('organizations').upsert(fallbackRow, { onConflict: 'id' });
+  }
   await supabase.from('departments').upsert(
     sampleOrganization.departments.map((department) => departmentToRow(sampleOrganization.id, department)),
     { onConflict: 'id' },
@@ -327,10 +343,19 @@ async function ensureDefaultRemoteOrganization() {
 async function loadRemoteState(localState: AppState): Promise<AppState> {
   if (!isSupabaseConfigured || !supabase) return localState;
 
-  const { data: organizationRows, error: organizationError } = await supabase
+  let { data: organizationRows, error: organizationError }: { data: OrganizationRow[] | null; error: unknown } = await supabase
     .from('organizations')
-    .select('id,name,invite_code,owner_name,created_at')
+    .select('id,name,invite_code,owner_name,created_at,target_metric')
     .order('created_at', { ascending: true });
+
+  if (organizationError) {
+    const fallback = await supabase
+      .from('organizations')
+      .select('id,name,invite_code,owner_name,created_at')
+      .order('created_at', { ascending: true });
+    organizationRows = fallback.data;
+    organizationError = fallback.error;
+  }
 
   if (organizationError) return localState;
 
@@ -338,11 +363,16 @@ async function loadRemoteState(localState: AppState): Promise<AppState> {
     await ensureDefaultRemoteOrganization();
   }
 
-  const [{ data: refreshedOrganizations }, { data: departmentRows }, { data: logRows }] = await Promise.all([
-    supabase.from('organizations').select('id,name,invite_code,owner_name,created_at').order('created_at', { ascending: true }),
+  let refreshedOrganizations = organizationRows;
+  const [{ data: organizationRowsWithTarget, error: refreshedOrganizationError }, { data: departmentRows }, { data: logRows }] = await Promise.all([
+    supabase.from('organizations').select('id,name,invite_code,owner_name,created_at,target_metric').order('created_at', { ascending: true }),
     supabase.from('departments').select('id,organization_id,name,monthly_target_members'),
     supabase.from('reading_logs').select('id,date,organization_id,department_id,member_id,member_name,passage,reflection').order('date', { ascending: false }),
   ]);
+
+  if (!refreshedOrganizationError && organizationRowsWithTarget) {
+    refreshedOrganizations = organizationRowsWithTarget;
+  }
 
   const remoteOrganizations = (refreshedOrganizations ?? organizationRows ?? []).map((organization) => ({
     id: organization.id,
@@ -350,6 +380,7 @@ async function loadRemoteState(localState: AppState): Promise<AppState> {
     inviteCode: organization.invite_code,
     ownerName: organization.owner_name,
     createdAt: organization.created_at,
+    targetMetric: normalizeTargetMetric(organization.target_metric),
     departments: (departmentRows ?? [])
       .filter((department) => department.organization_id === organization.id)
       .map((department) => ({
@@ -375,19 +406,23 @@ async function loadRemoteState(localState: AppState): Promise<AppState> {
   });
 }
 
-async function saveRemoteOrganization(organization: Organization, ownerMember: Member) {
+async function saveRemoteOrganization(organization: Organization) {
   if (!supabase) return;
 
-  const { error: organizationError } = await supabase.from('organizations').insert(organizationToRow(organization));
+  const organizationRow = organizationToRow(organization);
+  let { error: organizationError } = await supabase.from('organizations').insert(organizationRow);
+  if (organizationError && String(organizationError.message ?? '').includes('target_metric')) {
+    const fallbackRow = { ...organizationRow };
+    delete fallbackRow.target_metric;
+    const fallback = await supabase.from('organizations').insert(fallbackRow);
+    organizationError = fallback.error;
+  }
   if (organizationError) throw organizationError;
 
   const { error: departmentError } = await supabase
     .from('departments')
     .insert(organization.departments.map((department) => departmentToRow(organization.id, department)));
   if (departmentError) throw departmentError;
-
-  const { error: memberError } = await supabase.from('members').insert(memberToRow(ownerMember));
-  if (memberError) throw memberError;
 }
 
 async function saveRemoteMember(member: Member) {
@@ -518,6 +553,7 @@ export default function App() {
   const [onboardingMode, setOnboardingMode] = useState<'create' | 'join'>('join');
   const [organizationName, setOrganizationName] = useState('부산교회 청년회');
   const [ownerName, setOwnerName] = useState('');
+  const [targetMetric, setTargetMetric] = useState<TargetMetric>('members');
   const [departmentDrafts, setDepartmentDrafts] = useState([
     { id: makeId(), name: '언약부', monthlyTargetMembers: '300' },
     { id: makeId(), name: '밀알부', monthlyTargetMembers: '300' },
@@ -526,6 +562,7 @@ export default function App() {
   const [joinOrganizationId, setJoinOrganizationId] = useState(sampleOrganization.id);
   const [joinDepartmentId, setJoinDepartmentId] = useState(sampleOrganization.departments[0].id);
   const [joinMemberName, setJoinMemberName] = useState('');
+  const [joinSelectionTouched, setJoinSelectionTouched] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState<NotificationState>('default');
 
   useEffect(() => {
@@ -592,8 +629,27 @@ export default function App() {
     });
   }, [hydrated, state]);
 
+  useEffect(() => {
+    if (state.organizations.some((organization) => organization.id === joinOrganizationId)) return;
+    const fallbackOrganization = state.organizations[0];
+    if (!fallbackOrganization) return;
+    setJoinOrganizationId(fallbackOrganization.id);
+    setJoinDepartmentId(fallbackOrganization.departments[0]?.id ?? '');
+  }, [joinOrganizationId, state.organizations]);
+
+  useEffect(() => {
+    if (!hydrated || state.currentMember || joinSelectionTouched || !state.currentOrganizationId) return;
+    const preferredOrganization = state.organizations.find((organization) => organization.id === state.currentOrganizationId);
+    if (!preferredOrganization || preferredOrganization.id === joinOrganizationId) return;
+    setJoinOrganizationId(preferredOrganization.id);
+    setJoinDepartmentId(preferredOrganization.departments[0]?.id ?? '');
+  }, [hydrated, joinOrganizationId, joinSelectionTouched, state.currentMember, state.currentOrganizationId, state.organizations]);
+
   const currentOrganization = state.organizations.find((organization) => organization.id === state.currentOrganizationId) ?? state.organizations[0] ?? sampleOrganization;
   const departments = currentOrganization.departments;
+  const targetUnit = currentOrganization.targetMetric === 'chapters' ? '장' : '명';
+  const targetNoun = currentOrganization.targetMetric === 'chapters' ? '장수' : '인원수';
+  const targetCountLabel = currentOrganization.targetMetric === 'chapters' ? '장' : '명';
   const activeMember = state.currentMember;
   const myDepartment = departments.find((department) => department.id === activeMember?.departmentId) ?? departments[0];
   const today = todayKey();
@@ -651,7 +707,7 @@ export default function App() {
     .sort((a, b) => b.id.localeCompare(a.id));
   const canDeleteSelectedLog = !!selectedLog && (selectedLog.memberId === activeMember?.id || (isReflectionAdmin && selectedLog.date === today && !!selectedLog.reflection?.trim()));
 
-  const shareText = `[${MONTH_LABEL} 성경읽기 챌린지]\n${currentOrganization.name} ${myDepartment.name}는 현재 ${currentDepartmentStats.count} / ${myDepartment.monthlyTargetMembers}명입니다.\n전체는 ${totalCount} / ${totalTarget}명까지 채워졌어요.\n오늘도 말씀 읽기 인증으로 함께해요.`;
+  const shareText = `[${MONTH_LABEL} 성경읽기 챌린지]\n${currentOrganization.name} ${myDepartment.name}는 현재 ${currentDepartmentStats.count} / ${myDepartment.monthlyTargetMembers}${targetUnit}입니다.\n전체는 ${totalCount} / ${totalTarget}${targetUnit}까지 채워졌어요.\n오늘도 말씀 읽기 인증으로 함께해요.`;
 
   const updateState = (next: Partial<AppState>) => setState((prev) => ({ ...prev, ...next }));
 
@@ -689,18 +745,12 @@ export default function App() {
       ownerName: owner,
       inviteCode: `${name.replace(/\s/g, '').slice(0, 6).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`,
       createdAt: today,
+      targetMetric,
       departments: departmentsToCreate,
-    };
-    const ownerMember: Member = {
-      id: makeId(),
-      organizationId: organization.id,
-      departmentId: organization.departments[0].id,
-      name: owner,
-      role: 'owner',
     };
 
     try {
-      await saveRemoteOrganization(organization, ownerMember);
+      await saveRemoteOrganization(organization);
     } catch {
       Alert.alert('단체 생성 실패', 'Supabase 테이블 설정을 확인해 주세요. SQL 스키마를 먼저 실행해야 합니다.');
       return;
@@ -710,11 +760,14 @@ export default function App() {
       ...prev,
       organizations: [organization, ...prev.organizations],
       currentOrganizationId: organization.id,
-      currentMember: ownerMember,
+      currentMember: undefined,
     }));
     setJoinOrganizationId(organization.id);
     setJoinDepartmentId(organization.departments[0].id);
-    setTab('dashboard');
+    setJoinMemberName(owner);
+    setJoinSelectionTouched(false);
+    setOnboardingMode('join');
+    Alert.alert('단체 생성 완료', '단체 선택 목록에 추가했습니다. 부서와 이름을 확인한 뒤 가입해 주세요.');
   };
 
   const joinOrganization = async () => {
@@ -955,7 +1008,17 @@ export default function App() {
                 <Text style={styles.fieldLabel}>단체장 이름</Text>
                 <TextInput value={ownerName} onChangeText={setOwnerName} placeholder="이름 입력" placeholderTextColor="#8A969D" style={styles.input} />
 
-                <Text style={styles.fieldLabel}>부서 및 월 목표 인원수</Text>
+                <Text style={styles.fieldLabel}>월 목표 기준</Text>
+                <View style={styles.segmented}>
+                  <Pressable style={[styles.segment, targetMetric === 'members' && styles.segmentActive]} onPress={() => setTargetMetric('members')}>
+                    <Text style={[styles.segmentText, targetMetric === 'members' && styles.segmentTextActive]}>월 목표 인원수</Text>
+                  </Pressable>
+                  <Pressable style={[styles.segment, targetMetric === 'chapters' && styles.segmentActive]} onPress={() => setTargetMetric('chapters')}>
+                    <Text style={[styles.segmentText, targetMetric === 'chapters' && styles.segmentTextActive]}>월 목표 장수</Text>
+                  </Pressable>
+                </View>
+
+                <Text style={styles.fieldLabel}>부서 및 월 목표 {targetMetric === 'chapters' ? '장수' : '인원수'}</Text>
                 {departmentDrafts.map((department) => (
                   <View key={department.id} style={styles.departmentDraftRow}>
                     <TextInput
@@ -968,7 +1031,7 @@ export default function App() {
                     <TextInput
                       value={department.monthlyTargetMembers}
                       onChangeText={(monthlyTargetMembers) => updateDepartmentDraft(department.id, { monthlyTargetMembers: monthlyTargetMembers.replace(/[^0-9]/g, '') })}
-                      placeholder="30"
+                      placeholder={targetMetric === 'chapters' ? '300' : '30'}
                       placeholderTextColor="#8A969D"
                       keyboardType="number-pad"
                       style={[styles.input, styles.departmentTargetInput]}
@@ -994,6 +1057,7 @@ export default function App() {
                       key={organization.id}
                       style={[styles.optionRow, joinOrganizationId === organization.id && styles.optionRowActive]}
                       onPress={() => {
+                        setJoinSelectionTouched(true);
                         setJoinOrganizationId(organization.id);
                         setJoinDepartmentId(organization.departments[0]?.id ?? '');
                       }}
@@ -1046,10 +1110,10 @@ export default function App() {
           <Text style={styles.panelKicker}>{myDepartment.name}</Text>
           <Text style={styles.heroNumber}>
             {currentDepartmentStats.count}
-            <Text style={styles.heroUnit}> / {myDepartment.monthlyTargetMembers}명</Text>
+            <Text style={styles.heroUnit}> / {myDepartment.monthlyTargetMembers}{targetUnit}</Text>
           </Text>
           <ProgressBar value={currentDepartmentStats.count} total={myDepartment.monthlyTargetMembers} light />
-          <Text style={styles.heroHelp}>목표까지 {currentDepartmentStats.remaining}명 남았습니다.</Text>
+          <Text style={styles.heroHelp}>목표까지 {currentDepartmentStats.remaining}{targetUnit} 남았습니다.</Text>
           <View style={styles.heroActions}>
             <Pressable
               hitSlop={8}
@@ -1065,13 +1129,13 @@ export default function App() {
       <View style={styles.summaryBand}>
         <StatTile label="내 이번 달 인증" value={`${myLogs.length}회`} helper={checkedToday ? '오늘 인증 완료' : '오늘 인증 전'} />
         <StatTile label="연속 기록" value={`${currentStreak}일`} helper="매일 1회 기준" />
-        <StatTile label="이번 주 전체 인증" value={`${weeklyCount}명`} helper="최근 7일 집계" />
-        <StatTile label="단체 전체" value={`${totalCount}명`} helper={`${Math.max(0, totalTarget - totalCount)}명 남음`} />
+        <StatTile label={`이번 주 전체 ${targetCountLabel}`} value={`${weeklyCount}${targetUnit}`} helper="최근 7일 집계" />
+        <StatTile label="단체 전체" value={`${totalCount}${targetUnit}`} helper={`${Math.max(0, totalTarget - totalCount)}${targetUnit} 남음`} />
       </View>
 
       <View style={[styles.twoColumn, isWide && styles.twoColumnWide]}>
         <View style={[styles.panel, isWide && styles.panelWide]}>
-          <SectionHeader title="부서 진행률" action={`${MONTH_LABEL} 목표`} />
+          <SectionHeader title="부서 진행률" action={`${MONTH_LABEL} ${targetNoun} 목표`} />
           {departmentStats.map((department, index) => (
             <Pressable
               key={department.id}
@@ -1081,9 +1145,9 @@ export default function App() {
               <View style={styles.cardHeaderRow}>
                 <View>
                   <Text style={styles.departmentName}>{department.name}</Text>
-                  <Text style={styles.mutedText}>월 목표 {department.monthlyTargetMembers}명 · {department.participants}명 참여</Text>
+                  <Text style={styles.mutedText}>월 목표 {department.monthlyTargetMembers}{targetUnit} · {department.participants}명 참여</Text>
                 </View>
-                <Text style={styles.cardValue}>{department.count}명</Text>
+                <Text style={styles.cardValue}>{department.count}{targetUnit}</Text>
               </View>
               <ProgressBar value={department.count} total={department.monthlyTargetMembers} />
             </Pressable>
@@ -1416,7 +1480,7 @@ export default function App() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>오늘 인증 완료</Text>
-            <Text style={styles.modalCount}>{myDepartment.name} 누적 {currentDepartmentStats.count} / {myDepartment.monthlyTargetMembers}명</Text>
+            <Text style={styles.modalCount}>{myDepartment.name} 누적 {currentDepartmentStats.count} / {myDepartment.monthlyTargetMembers}{targetUnit}</Text>
             <Text style={styles.modalText}>오늘의 기록이 저장되었습니다. 부서 목표 현황도 함께 갱신됐습니다.</Text>
             <Pressable style={styles.primaryButton} onPress={() => { setCompletedModal(false); setTab('dashboard'); }}>
               <Text style={styles.primaryButtonText}>대시보드 보기</Text>

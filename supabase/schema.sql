@@ -3,6 +3,7 @@ create table if not exists public.organizations (
   name text not null,
   invite_code text not null unique,
   owner_name text not null,
+  target_metric text not null default 'members' check (target_metric in ('members', 'chapters')),
   created_at date not null default current_date
 );
 
@@ -45,6 +46,9 @@ create table if not exists public.push_subscriptions (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.organizations
+  add column if not exists target_metric text not null default 'members' check (target_metric in ('members', 'chapters'));
 
 create index if not exists departments_organization_id_idx on public.departments(organization_id);
 create index if not exists members_organization_id_idx on public.members(organization_id);
