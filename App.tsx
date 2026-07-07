@@ -353,8 +353,8 @@ function readingLogToRow(log: ReadingLog): ReadingLogRow {
     member_id: log.memberId,
     member_name: log.memberName,
     read_chapters: normalizeReadChapters(log.readChapters),
-    passage: log.passage ?? null,
-    reflection: log.reflection ?? null,
+    passage: log.passage?.trim() || '성경 읽기 인증',
+    reflection: log.reflection?.trim() || '',
   };
 }
 
@@ -408,12 +408,11 @@ async function loadRemoteState(localState: AppState): Promise<AppState> {
   }
 
   let refreshedOrganizations = organizationRows;
-  const [{ data: organizationRowsWithTarget, error: refreshedOrganizationError }, { data: departmentRows }, { data: memberRows }, logResult, announcementResult] = await Promise.all([
+  const [{ data: organizationRowsWithTarget, error: refreshedOrganizationError }, { data: departmentRows }, { data: memberRows }, logResult] = await Promise.all([
     supabase.from('organizations').select('id,name,invite_code,owner_name,created_at,target_metric').order('created_at', { ascending: true }),
     supabase.from('departments').select('id,organization_id,name,monthly_target_members'),
     supabase.from('members').select('id,organization_id,department_id,name,role'),
     supabase.from('reading_logs').select('id,date,organization_id,department_id,member_id,member_name,read_chapters,passage,reflection').order('date', { ascending: false }),
-    supabase.from('announcements').select('id,organization_id,title,body,updated_at').order('updated_at', { ascending: false }),
   ]);
 
   if (!refreshedOrganizationError && organizationRowsWithTarget) {
@@ -429,6 +428,10 @@ async function loadRemoteState(localState: AppState): Promise<AppState> {
     logRows = (fallback.data ?? null) as ReadingLogRow[] | null;
   }
 
+  const announcementResult = await supabase
+    .from('announcements')
+    .select('id,organization_id,title,body,updated_at')
+    .order('updated_at', { ascending: false });
   const announcementRows = announcementResult.error ? null : ((announcementResult.data ?? null) as AnnouncementRow[] | null);
 
   const remoteOrganizations = (refreshedOrganizations ?? organizationRows ?? []).map((organization) => ({
@@ -951,13 +954,14 @@ export default function App() {
       memberName: activeMember.name.trim() || '이름 없음',
       readChapters: nextReadChapters,
       passage: trimmedPassage || undefined,
-      reflection: trimmedReflection || undefined,
+      reflection: trimmedReflection,
     };
 
     try {
       await saveRemoteReadingLog(nextLog);
-    } catch {
-      Alert.alert('인증 저장 실패', 'Supabase 연결 또는 reading_logs 테이블 설정을 확인해 주세요.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Supabase 연결 또는 reading_logs 테이블 설정을 확인해 주세요.';
+      Alert.alert('인증 저장 실패', message);
       return;
     }
 
