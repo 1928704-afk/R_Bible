@@ -1,5 +1,5 @@
-const CACHE_NAME = 'bible-reading-challenge-pwa-v1';
-const APP_SHELL = ['/', '/manifest.webmanifest', '/icon.svg'];
+const CACHE_NAME = 'bible-reading-challenge-pwa-v2';
+const APP_SHELL = ['/', '/manifest.webmanifest', '/icon.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -49,8 +49,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(payload.title || fallback.title, {
       body: payload.body || fallback.body,
-      icon: '/icon.svg',
-      badge: '/icon.svg',
+      icon: '/icon.png',
+      badge: '/icon.png',
       data: { url: payload.url || fallback.url },
     }),
   );
