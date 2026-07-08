@@ -18,6 +18,18 @@ import {
 } from 'react-native';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
+const textDefaultProps = Text as unknown as { defaultProps?: Record<string, unknown> };
+textDefaultProps.defaultProps = {
+  ...textDefaultProps.defaultProps,
+  allowFontScaling: false,
+};
+
+const inputDefaultProps = TextInput as unknown as { defaultProps?: Record<string, unknown> };
+inputDefaultProps.defaultProps = {
+  ...inputDefaultProps.defaultProps,
+  allowFontScaling: false,
+};
+
 type Tab = 'dashboard' | 'check' | 'departments' | 'records' | 'admin' | 'superAdmin';
 
 type OrganizationId = string;
@@ -266,15 +278,36 @@ function normalizeReadChapters(value: unknown) {
   return Math.max(1, Math.min(200, Number(value) || 1));
 }
 
+function hasBrokenText(value: unknown) {
+  if (typeof value !== 'string') return true;
+  return /�|Ã|Â|ì|ë|ê|ð/.test(value);
+}
+
+function cleanText(value: unknown, fallback = '') {
+  if (hasBrokenText(value)) return fallback;
+  return String(value).trim() || fallback;
+}
+
+function cleanDepartmentName(id: string, name: unknown) {
+  if (id === 'dept-covenant') return '언약부';
+  if (id === 'dept-wheat') return '밀알부';
+  if (id === 'dept-ireh') return '이례부';
+  const cleaned = cleanText(name, '부서');
+  return cleaned === '이레부' ? '이례부' : cleaned;
+}
+
 function normalizeState(parsed: Partial<AppState>): AppState {
   const organizations = Array.isArray(parsed.organizations) && parsed.organizations.length > 0
     ? parsed.organizations.map((organization) => ({
       ...organization,
+      name: cleanText(organization.name, organization.id === sampleOrganization.id ? sampleOrganization.name : '성경읽기 챌린지'),
+      inviteCode: cleanText(organization.inviteCode, sampleOrganization.inviteCode),
+      ownerName: cleanText(organization.ownerName, '단체장'),
       targetMetric: normalizeTargetMetric(organization.targetMetric),
       departments: Array.isArray(organization.departments)
         ? organization.departments.map((department) => ({
           ...department,
-          name: organization.name === '부산교회 청년회' && department.id === 'dept-ireh' ? '이례부' : department.name,
+          name: cleanDepartmentName(department.id, department.name),
           monthlyTargetMembers: organization.name === '부산교회 청년회' && ['언약부', '밀알부', '이레부', '이례부'].includes(department.name)
             ? 300
             : Math.max(1, Number(department.monthlyTargetMembers ?? (department as unknown as { monthlyTargetChapters?: number }).monthlyTargetChapters ?? 300)),
@@ -287,7 +320,7 @@ function normalizeState(parsed: Partial<AppState>): AppState {
     ? parsed.currentOrganizationId
     : parsed.currentMember?.organizationId ?? undefined;
   const currentMember = parsed.currentMember && organizations.some((organization) => organization.id === parsed.currentMember?.organizationId)
-    ? parsed.currentMember
+    ? { ...parsed.currentMember, name: cleanText(parsed.currentMember.name, '이름 없음') }
     : undefined;
 
   return {
@@ -302,14 +335,25 @@ function normalizeState(parsed: Partial<AppState>): AppState {
         ...log,
         organizationId: log.organizationId ?? fallbackOrganization.id,
         memberId: log.memberId ?? makeId(),
+        memberName: cleanText(log.memberName, '이름 없음'),
+        passage: hasBrokenText(log.passage) ? undefined : log.passage,
+        reflection: hasBrokenText(log.reflection) ? undefined : log.reflection,
         readChapters: normalizeReadChapters(log.readChapters),
       }))
       : initialState.logs,
     members: Array.isArray(parsed.members)
-      ? parsed.members.filter((member) => organizations.some((organization) => organization.id === member.organizationId))
+      ? parsed.members
+        .filter((member) => organizations.some((organization) => organization.id === member.organizationId))
+        .map((member) => ({ ...member, name: cleanText(member.name, '이름 없음') }))
       : initialState.members,
     announcements: Array.isArray(parsed.announcements)
-      ? parsed.announcements.filter((announcement) => organizations.some((organization) => organization.id === announcement.organizationId))
+      ? parsed.announcements
+        .filter((announcement) => organizations.some((organization) => organization.id === announcement.organizationId))
+        .map((announcement) => ({
+          ...announcement,
+          title: cleanText(announcement.title, '오늘 공지'),
+          body: hasBrokenText(announcement.body) ? '' : announcement.body,
+        }))
       : initialState.announcements,
   };
 }
