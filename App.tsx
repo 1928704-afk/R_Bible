@@ -92,6 +92,8 @@ type AppState = {
     daily: boolean;
     streak: boolean;
     department: boolean;
+    count: number;
+    times: string[];
   };
 };
 
@@ -99,6 +101,8 @@ const STORAGE_KEY = 'bible-reading-challenge-app-v2';
 const LEGACY_WEB_STORAGE_KEY = 'bible-reading-challenge-web-v1';
 const MONTH_LABEL = '7월';
 const VAPID_PUBLIC_KEY = process.env.EXPO_PUBLIC_VAPID_PUBLIC_KEY;
+const DEFAULT_REMINDER_TIMES = ['21:00', '08:00', '12:00'];
+const REMINDER_COUNT_OPTIONS = [1, 2, 3];
 
 const sampleOrganization: Organization = {
   id: 'org-busan-youth',
@@ -123,6 +127,8 @@ const initialState: AppState = {
     daily: true,
     streak: true,
     department: true,
+    count: 1,
+    times: ['21:00'],
   },
 };
 
@@ -274,6 +280,28 @@ function normalizeTargetMetric(value: unknown): TargetMetric {
   return value === 'chapters' ? 'chapters' : 'members';
 }
 
+function normalizeReminderTime(value: unknown, fallback = '21:00') {
+  if (typeof value !== 'string') return fallback;
+
+  const match = value.trim().match(/^([0-2]?\d):([0-5]\d)$/);
+  if (!match) return fallback;
+
+  const hour = Math.min(23, Number(match[1]));
+  const minute = Number(match[2]);
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function normalizeReminderCount(value: unknown) {
+  const count = Math.round(Number(value));
+  if (!Number.isFinite(count)) return 1;
+  return Math.min(3, Math.max(1, count));
+}
+
+function normalizeReminderTimes(value: unknown, count = 1) {
+  const source = Array.isArray(value) ? value : [];
+  return Array.from({ length: count }, (_, index) => normalizeReminderTime(source[index], DEFAULT_REMINDER_TIMES[index] ?? '21:00'));
+}
+
 function normalizeReadChapters(value: unknown) {
   return Math.max(1, Math.min(200, Number(value) || 1));
 }
@@ -329,7 +357,12 @@ function normalizeState(parsed: Partial<AppState>): AppState {
     organizations,
     currentOrganizationId: currentOrganizationId && organizations.some((organization) => organization.id === currentOrganizationId) ? currentOrganizationId : currentMember?.organizationId,
     currentMember,
-    reminders: { ...initialState.reminders, ...parsed.reminders },
+    reminders: {
+      ...initialState.reminders,
+      ...parsed.reminders,
+      count: normalizeReminderCount(parsed.reminders?.count),
+      times: normalizeReminderTimes(parsed.reminders?.times, normalizeReminderCount(parsed.reminders?.count)),
+    },
     logs: Array.isArray(parsed.logs)
       ? parsed.logs.map((log) => ({
         ...log,
@@ -592,7 +625,7 @@ async function runRemoteAdminAction(action: string, payload: Record<string, unkn
   if (error) throw error;
 }
 
-async function saveRemotePushSubscription(member: Member, subscription: PushSubscription) {
+async function saveRemotePushSubscription(member: Member, subscription: PushSubscription, reminders: AppState['reminders']) {
   if (!supabase) return;
 
   const subscriptionJson = subscription.toJSON();
@@ -604,6 +637,8 @@ async function saveRemotePushSubscription(member: Member, subscription: PushSubs
   }
 
   const webNavigator = (globalThis as unknown as { navigator?: Navigator }).navigator;
+  const reminderCount = normalizeReminderCount(reminders.count);
+  const reminderTimes = normalizeReminderTimes(reminders.times, reminderCount);
   const { error } = await supabase.from('push_subscriptions').upsert(
     {
       id: makeId(),
@@ -613,6 +648,10 @@ async function saveRemotePushSubscription(member: Member, subscription: PushSubs
       p256dh,
       auth,
       user_agent: webNavigator?.userAgent ?? null,
+      reminder_enabled: reminders.daily,
+      reminder_count: reminderCount,
+      reminder_times: reminderTimes,
+      reminder_timezone: 'Asia/Seoul',
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'endpoint' },
@@ -1394,12 +1433,39 @@ export default function App() {
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as unknown as BufferSource,
       });
 
-      await saveRemotePushSubscription(activeMember, subscription);
+      await saveRemotePushSubscription(activeMember, subscription, state.reminders);
       setNotificationStatus('subscribed');
-      Alert.alert('알림 설정 완료', '이 기기에서 성경읽기 리마인드를 받을 수 있습니다.');
+      Alert.alert('알림 설정 완료', `이 기기에서 하루 ${normalizeReminderCount(state.reminders.count)}회 리마인드를 받을 수 있습니다.`);
     } catch {
       Alert.alert('알림 설정 실패', '브라우저 권한, VAPID 키, Supabase push_subscriptions 테이블 설정을 확인해 주세요.');
     }
+  };
+
+  const updateReminderCount = (count: number) => {
+    setState((prev) => ({
+      ...prev,
+      reminders: {
+        ...prev.reminders,
+        count,
+        times: normalizeReminderTimes(prev.reminders.times, count),
+      },
+    }));
+  };
+
+  const updateReminderTime = (index: number, value: string) => {
+    setState((prev) => {
+      const times = normalizeReminderTimes(prev.reminders.times, normalizeReminderCount(prev.reminders.count));
+      times[index] = value.replace(/[^0-9:]/g, '').slice(0, 5);
+      return { ...prev, reminders: { ...prev.reminders, times } };
+    });
+  };
+
+  const commitReminderTime = (index: number) => {
+    setState((prev) => {
+      const times = normalizeReminderTimes(prev.reminders.times, normalizeReminderCount(prev.reminders.count));
+      times[index] = normalizeReminderTime(times[index], DEFAULT_REMINDER_TIMES[index] ?? '21:00');
+      return { ...prev, reminders: { ...prev.reminders, times } };
+    });
   };
 
   const share = async () => {
@@ -1879,30 +1945,55 @@ export default function App() {
       </View>
 
       <View style={styles.panel}>
-        <SectionHeader title="알림 전략" />
+        <SectionHeader title="알림 설정" />
         <View style={styles.settingRow}>
           <View style={styles.settingCopy}>
             <Text style={styles.settingTitle}>매일 읽기 리마인드</Text>
-            <Text style={styles.settingSub}>미인증 상태일 때 저녁에 안내</Text>
+            <Text style={styles.settingSub}>설정한 시간에 이 기기로 안내</Text>
           </View>
           <Switch value={state.reminders.daily} onValueChange={(daily) => setState((prev) => ({ ...prev, reminders: { ...prev.reminders, daily } }))} />
         </View>
         <View style={styles.settingRow}>
           <View style={styles.settingCopy}>
-            <Text style={styles.settingTitle}>연속 기록 리마인드</Text>
-            <Text style={styles.settingSub}>3일 이상 흐름을 이어갈 때만 안내</Text>
+            <Text style={styles.settingTitle}>하루 알림 횟수</Text>
+            <Text style={styles.settingSub}>하루 최대 3회까지 설정 가능</Text>
           </View>
-          <Switch value={state.reminders.streak} onValueChange={(streak) => setState((prev) => ({ ...prev, reminders: { ...prev.reminders, streak } }))} />
+          <View style={styles.countStepper}>
+            {REMINDER_COUNT_OPTIONS.map((count) => (
+              <Pressable
+                key={count}
+                style={[styles.countButton, normalizeReminderCount(state.reminders.count) === count && styles.countButtonActive]}
+                onPress={() => updateReminderCount(count)}
+              >
+                <Text style={[styles.countButtonText, normalizeReminderCount(state.reminders.count) === count && styles.countButtonTextActive]}>{count}</Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
-        <View style={styles.settingRowLast}>
+        <View style={styles.settingBlock}>
           <View style={styles.settingCopy}>
-            <Text style={styles.settingTitle}>부서 목표 리마인드</Text>
-            <Text style={styles.settingSub}>월말 목표 근접 구간에서 안내</Text>
+            <Text style={styles.settingTitle}>알림 시간</Text>
+            <Text style={styles.settingSub}>24시간 형식으로 입력해 주세요. 예) 21:00</Text>
           </View>
-          <Switch value={state.reminders.department} onValueChange={(department) => setState((prev) => ({ ...prev, reminders: { ...prev.reminders, department } }))} />
+          <View style={styles.timeInputGrid}>
+            {normalizeReminderTimes(state.reminders.times, normalizeReminderCount(state.reminders.count)).map((time, index) => (
+              <View key={`reminder-time-${index}`} style={styles.timeInputWrap}>
+                <Text style={styles.timeInputLabel}>{index + 1}회차</Text>
+                <TextInput
+                  value={time}
+                  onChangeText={(value) => updateReminderTime(index, value)}
+                  onBlur={() => commitReminderTime(index)}
+                  placeholder={DEFAULT_REMINDER_TIMES[index] ?? '21:00'}
+                  placeholderTextColor="#8A969D"
+                  keyboardType="numbers-and-punctuation"
+                  style={[styles.input, styles.timeInput]}
+                />
+              </View>
+            ))}
+          </View>
         </View>
         <Pressable style={styles.secondaryButton} onPress={requestNotifications}>
-          <Text style={styles.secondaryButtonText}>알림 받기</Text>
+          <Text style={styles.secondaryButtonText}>알림 설정 저장</Text>
         </Pressable>
         <Text style={styles.notificationHelp}>{notificationStatusText}</Text>
       </View>
@@ -2587,9 +2678,19 @@ const styles = StyleSheet.create({
   segmentTextActive: { color: '#FFFFFF' },
   settingRow: { paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#E5EEF3', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   settingRowLast: { paddingVertical: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  settingBlock: { paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#E5EEF3', gap: 12 },
   settingCopy: { flex: 1 },
   settingTitle: { color: '#142A36', fontSize: 15, fontWeight: '900' },
   settingSub: { color: '#657B87', fontSize: 12, fontWeight: '700', marginTop: 4 },
+  countStepper: { flexDirection: 'row', gap: 6 },
+  countButton: { width: 42, height: 40, borderRadius: 8, borderWidth: 1, borderColor: '#D7E7EF', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
+  countButtonActive: { backgroundColor: '#2F9FDB', borderColor: '#2F9FDB' },
+  countButtonText: { color: '#556C78', fontSize: 14, fontWeight: '900' },
+  countButtonTextActive: { color: '#FFFFFF' },
+  timeInputGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  timeInputWrap: { flex: 1, minWidth: 112 },
+  timeInputLabel: { color: '#657B87', fontSize: 12, fontWeight: '900', marginBottom: 6 },
+  timeInput: { minHeight: 46, textAlign: 'center', fontWeight: '900' },
   notificationHelp: { color: '#657B87', fontSize: 12, fontWeight: '700', lineHeight: 18, marginTop: 10 },
   dangerButton: { backgroundColor: '#F7E7E4', paddingVertical: 15, paddingHorizontal: 18, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginTop: 10 },
   dangerButtonText: { color: '#A14435', fontSize: 15, fontWeight: '900' },

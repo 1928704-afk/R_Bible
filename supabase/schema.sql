@@ -44,6 +44,11 @@ create table if not exists public.push_subscriptions (
   p256dh text not null,
   auth text not null,
   user_agent text,
+  reminder_enabled boolean not null default true,
+  reminder_count integer not null default 1 check (reminder_count between 1 and 3),
+  reminder_times text[] not null default array['21:00'],
+  reminder_timezone text not null default 'Asia/Seoul',
+  reminder_last_sent_key text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -61,6 +66,13 @@ alter table public.organizations
 
 alter table public.reading_logs
   add column if not exists read_chapters integer not null default 1 check (read_chapters > 0);
+
+alter table public.push_subscriptions
+  add column if not exists reminder_enabled boolean not null default true,
+  add column if not exists reminder_count integer not null default 1 check (reminder_count between 1 and 3),
+  add column if not exists reminder_times text[] not null default array['21:00'],
+  add column if not exists reminder_timezone text not null default 'Asia/Seoul',
+  add column if not exists reminder_last_sent_key text;
 
 create index if not exists departments_organization_id_idx on public.departments(organization_id);
 create index if not exists members_organization_id_idx on public.members(organization_id);
