@@ -749,6 +749,21 @@ export default function App() {
       webDocument.head.appendChild(manifestLink);
     }
 
+    if (webDocument && !webDocument.querySelector('link[rel="apple-touch-icon"]')) {
+      const appleIconLink = webDocument.createElement('link');
+      appleIconLink.rel = 'apple-touch-icon';
+      appleIconLink.href = '/icon-v2.png';
+      webDocument.head.appendChild(appleIconLink);
+    }
+
+    if (webDocument && !webDocument.querySelector('link[rel="icon"]')) {
+      const iconLink = webDocument.createElement('link');
+      iconLink.rel = 'icon';
+      iconLink.type = 'image/png';
+      iconLink.href = '/icon-v2.png';
+      webDocument.head.appendChild(iconLink);
+    }
+
     if (webDocument && !webDocument.querySelector('meta[name="theme-color"]')) {
       const themeMeta = webDocument.createElement('meta');
       themeMeta.name = 'theme-color';
