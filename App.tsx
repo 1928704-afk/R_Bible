@@ -103,6 +103,8 @@ const MONTH_LABEL = '7월';
 const VAPID_PUBLIC_KEY = process.env.EXPO_PUBLIC_VAPID_PUBLIC_KEY;
 const DEFAULT_REMINDER_TIMES = ['21:00', '08:00', '12:00'];
 const REMINDER_COUNT_OPTIONS = [1, 2, 3];
+const REMINDER_HOURS = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, '0'));
+const REMINDER_MINUTES = ['00', '10', '20', '30', '40', '50'];
 
 const sampleOrganization: Organization = {
   id: 'org-busan-youth',
@@ -735,6 +737,7 @@ export default function App() {
   const [completedModal, setCompletedModal] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [bookPickerOpen, setBookPickerOpen] = useState(false);
+  const [reminderTimePickerIndex, setReminderTimePickerIndex] = useState<number | null>(null);
   const [selectedLog, setSelectedLog] = useState<ReadingLog | null>(null);
   const [onboardingMode, setOnboardingMode] = useState<'create' | 'join'>('join');
   const [organizationName, setOrganizationName] = useState('부산교회 청년회');
@@ -1452,18 +1455,11 @@ export default function App() {
     }));
   };
 
-  const updateReminderTime = (index: number, value: string) => {
+  const selectReminderTimePart = (index: number, part: 'hour' | 'minute', value: string) => {
     setState((prev) => {
       const times = normalizeReminderTimes(prev.reminders.times, normalizeReminderCount(prev.reminders.count));
-      times[index] = value.replace(/[^0-9:]/g, '').slice(0, 5);
-      return { ...prev, reminders: { ...prev.reminders, times } };
-    });
-  };
-
-  const commitReminderTime = (index: number) => {
-    setState((prev) => {
-      const times = normalizeReminderTimes(prev.reminders.times, normalizeReminderCount(prev.reminders.count));
-      times[index] = normalizeReminderTime(times[index], DEFAULT_REMINDER_TIMES[index] ?? '21:00');
+      const [hour, minute] = normalizeReminderTime(times[index], DEFAULT_REMINDER_TIMES[index] ?? '21:00').split(':');
+      times[index] = part === 'hour' ? `${value}:${minute}` : `${hour}:${value}`;
       return { ...prev, reminders: { ...prev.reminders, times } };
     });
   };
@@ -1973,21 +1969,16 @@ export default function App() {
         <View style={styles.settingBlock}>
           <View style={styles.settingCopy}>
             <Text style={styles.settingTitle}>알림 시간</Text>
-            <Text style={styles.settingSub}>24시간 형식으로 입력해 주세요. 예) 21:00</Text>
+            <Text style={styles.settingSub}>시간을 눌러 스크롤 목록에서 선택해 주세요.</Text>
           </View>
           <View style={styles.timeInputGrid}>
             {normalizeReminderTimes(state.reminders.times, normalizeReminderCount(state.reminders.count)).map((time, index) => (
               <View key={`reminder-time-${index}`} style={styles.timeInputWrap}>
                 <Text style={styles.timeInputLabel}>{index + 1}회차</Text>
-                <TextInput
-                  value={time}
-                  onChangeText={(value) => updateReminderTime(index, value)}
-                  onBlur={() => commitReminderTime(index)}
-                  placeholder={DEFAULT_REMINDER_TIMES[index] ?? '21:00'}
-                  placeholderTextColor="#8A969D"
-                  keyboardType="numbers-and-punctuation"
-                  style={[styles.input, styles.timeInput]}
-                />
+                <Pressable style={styles.timeSelectButton} onPress={() => setReminderTimePickerIndex(index)}>
+                  <Text style={styles.timeSelectText}>{time}</Text>
+                  <Text style={styles.timeSelectChevron}>⌄</Text>
+                </Pressable>
               </View>
             ))}
           </View>
@@ -2372,6 +2363,64 @@ export default function App() {
         </Pressable>
       </Modal>
 
+      <Modal transparent visible={reminderTimePickerIndex !== null} animationType="slide" onRequestClose={() => setReminderTimePickerIndex(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.timePickerModal}>
+            <View style={styles.recordModalHeader}>
+              <View style={styles.recordModalTitleWrap}>
+                <Text style={styles.modalTitle}>알림 시간 선택</Text>
+                <Text style={styles.modalTextTight}>
+                  {reminderTimePickerIndex !== null ? `${reminderTimePickerIndex + 1}회차 알림` : ''}
+                </Text>
+              </View>
+              <Pressable hitSlop={10} style={styles.closeButton} onPress={() => setReminderTimePickerIndex(null)}>
+                <Text style={styles.closeButtonText}>닫기</Text>
+              </Pressable>
+            </View>
+            {reminderTimePickerIndex !== null ? (() => {
+              const selectedTime = normalizeReminderTimes(state.reminders.times, normalizeReminderCount(state.reminders.count))[reminderTimePickerIndex] ?? '21:00';
+              const [selectedHour, selectedMinute] = selectedTime.split(':');
+
+              return (
+                <View style={styles.timePickerBody}>
+                  <View style={styles.timePickerColumn}>
+                    <Text style={styles.timePickerColumnTitle}>시</Text>
+                    <ScrollView style={styles.timePickerList} contentContainerStyle={styles.timePickerListContent}>
+                      {REMINDER_HOURS.map((hour) => (
+                        <Pressable
+                          key={hour}
+                          style={[styles.timePickerOption, selectedHour === hour && styles.timePickerOptionActive]}
+                          onPress={() => selectReminderTimePart(reminderTimePickerIndex, 'hour', hour)}
+                        >
+                          <Text style={[styles.timePickerOptionText, selectedHour === hour && styles.timePickerOptionTextActive]}>{hour}시</Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  </View>
+                  <View style={styles.timePickerColumn}>
+                    <Text style={styles.timePickerColumnTitle}>분</Text>
+                    <ScrollView style={styles.timePickerList} contentContainerStyle={styles.timePickerListContent}>
+                      {REMINDER_MINUTES.map((minute) => (
+                        <Pressable
+                          key={minute}
+                          style={[styles.timePickerOption, selectedMinute === minute && styles.timePickerOptionActive]}
+                          onPress={() => selectReminderTimePart(reminderTimePickerIndex, 'minute', minute)}
+                        >
+                          <Text style={[styles.timePickerOptionText, selectedMinute === minute && styles.timePickerOptionTextActive]}>{minute}분</Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  </View>
+                </View>
+              );
+            })() : null}
+            <Pressable style={styles.primaryButton} onPress={() => setReminderTimePickerIndex(null)}>
+              <Text style={styles.primaryButtonText}>선택 완료</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
       <Modal transparent visible={selectedLog !== null} animationType="fade" onRequestClose={() => setSelectedLog(null)}>
         <View style={styles.modalOverlay}>
           <View style={styles.recordModalCard}>
@@ -2690,7 +2739,9 @@ const styles = StyleSheet.create({
   timeInputGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   timeInputWrap: { flex: 1, minWidth: 112 },
   timeInputLabel: { color: '#657B87', fontSize: 12, fontWeight: '900', marginBottom: 6 },
-  timeInput: { minHeight: 46, textAlign: 'center', fontWeight: '900' },
+  timeSelectButton: { minHeight: 46, borderRadius: 8, borderWidth: 1, borderColor: '#D7E7EF', backgroundColor: '#FFFFFF', paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  timeSelectText: { color: '#142A36', fontSize: 16, fontWeight: '900' },
+  timeSelectChevron: { color: '#2F9FDB', fontSize: 18, fontWeight: '900' },
   notificationHelp: { color: '#657B87', fontSize: 12, fontWeight: '700', lineHeight: 18, marginTop: 10 },
   dangerButton: { backgroundColor: '#F7E7E4', paddingVertical: 15, paddingHorizontal: 18, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginTop: 10 },
   dangerButtonText: { color: '#A14435', fontSize: 15, fontWeight: '900' },
@@ -2716,6 +2767,16 @@ const styles = StyleSheet.create({
   modalText: { color: '#65756F', fontSize: 14, fontWeight: '700', lineHeight: 21, marginTop: 8, marginBottom: 12 },
   modalTextTight: { color: '#65756F', fontSize: 14, fontWeight: '700', lineHeight: 21, marginTop: 6 },
   profileModal: { backgroundColor: '#FFFFFF', borderRadius: 8, padding: 22, maxWidth: 360, width: '100%', alignSelf: 'center' },
+  timePickerModal: { backgroundColor: '#FFFFFF', borderRadius: 8, padding: 20, maxWidth: 420, width: '100%', maxHeight: '82%', alignSelf: 'center' },
+  timePickerBody: { flexDirection: 'row', gap: 12, marginBottom: 16 },
+  timePickerColumn: { flex: 1, minWidth: 0 },
+  timePickerColumnTitle: { color: '#657B87', fontSize: 12, fontWeight: '900', marginBottom: 8 },
+  timePickerList: { maxHeight: 280, borderRadius: 8, borderWidth: 1, borderColor: '#E5EEF3', backgroundColor: '#F8FCFF' },
+  timePickerListContent: { padding: 8, gap: 6 },
+  timePickerOption: { minHeight: 44, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF' },
+  timePickerOptionActive: { backgroundColor: '#2F9FDB' },
+  timePickerOptionText: { color: '#556C78', fontSize: 15, fontWeight: '900' },
+  timePickerOptionTextActive: { color: '#FFFFFF' },
   recordModalCard: { backgroundColor: '#FFFFFF', borderRadius: 8, padding: 20, maxWidth: 520, width: '100%', maxHeight: '82%', alignSelf: 'center' },
   recordModalHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 },
   recordModalTitleWrap: { flex: 1, minWidth: 0 },
