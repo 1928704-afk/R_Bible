@@ -1,148 +1,183 @@
-# Bible Reading Challenge
+# 📖 Bible Reading Challenge (R_Bible)
 
-청년부·소그룹 단위의 성경읽기 인증을 관리하는 PWA 웹앱입니다. 단체장이 단체와 부서를 만들고, 소속원은 단체/부서/이름으로 참여해 매일 성경읽기 인증과 묵상글을 남길 수 있습니다.
+> **교회 청년부·소그룹을 위한 성경읽기 인증 및 공동체 챌린지 PWA 웹앱**  
+> 단체와 부서를 개설하고, 매일 성경 본문 읽기 인증과 묵상을 함께 나누며 공동체의 읽기 목표 달성률을 한눈에 확인할 수 있습니다.
 
-## 프로젝트 개요
+<div align="center">
 
-- 목적: 교회 청년부의 월별 성경읽기 참여 현황을 부서 단위로 관리
-- 형태: Expo 기반 React Native Web PWA
-- 배포: Cloudflare Pages + Supabase
-- 데이터: Supabase Postgres
-- 알림: Web Push + Supabase Edge Function + pg_cron
-- 향후 확장: 동일 코드베이스를 Android/iOS 앱 출시로 확장 가능
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-rbible.workers.dev-0284c7?style=for-the-badge&logo=cloudflare&logoColor=white)](https://rbible.tjsghkwlsgh.workers.dev)
+[![GitHub Repository](https://img.shields.io/badge/GitHub-R__Bible-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/1928704-afk/R_Bible)
+[![Expo](https://img.shields.io/badge/Expo-SDK_54-000020?style=for-the-badge&logo=expo&logoColor=white)](https://expo.dev/)
+[![React Native Web](https://img.shields.io/badge/React_Native_Web-React_19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://necolas.github.io/react-native-web/)
+[![Supabase](https://img.shields.io/badge/Supabase-Database_%26_Functions-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](./LICENSE)
 
-## 주요 기능
+</div>
 
-- 단체 생성 및 참여 온보딩
-- 부서별 월 목표 인원수 설정
-- 성경 66권/장 선택 기반 오늘 인증
-- 하루 1회 인증 제한
-- 오늘 작성된 묵상글 모아보기
-- 내 인증 기록 및 묵상글 상세 보기
-- 부서별 진행률과 전체 진행률 대시보드
-- PWA 설치 지원
-- 웹 푸시 알림 구독 및 매일 리마인드 발송
-- Supabase Edge Function 배포용 GitHub Actions 워크플로
+---
 
-## 기술 스택
+## 🔗 배포 링크 (Live Demo)
 
-| 영역 | 기술 |
-| --- | --- |
-| Frontend | Expo SDK 54, React 19, React Native, React Native Web, TypeScript |
-| Storage/API | Supabase JS, Supabase Postgres, Row Level Security |
-| PWA | Web App Manifest, Service Worker, Web Push |
-| Backend Job | Supabase Edge Functions, pg_cron, pg_net |
-| Deploy | Cloudflare Pages, GitHub Actions |
-| Package Manager | pnpm |
+- **🌐 프로덕션 웹앱**: [https://rbible.tjsghkwlsgh.workers.dev](https://rbible.tjsghkwlsgh.workers.dev)
+- **📦 GitHub 저장소**: [https://github.com/1928704-afk/R_Bible](https://github.com/1928704-afk/R_Bible)
 
-## 아키텍처
+> 💡 **PWA 설치 지원**: 모바일 브라우저(Safari, Chrome 등)에서 접속 후 **‘홈 화면에 추가’**를 누르면 독립형 네이티브 앱처럼 사용할 수 있습니다.
+
+---
+
+## 📌 프로젝트 개요
+
+- **목적**: 청년부/공동체 구성원들의 성경읽기 습관 형성을 돕고, 부서별 월간 목표 인원수 대비 참여율을 투명하게 시각화
+- **플랫폼**: Expo 기반의 React Native Web Single Page Application (PWA)
+- **호스팅/인프라**: Cloudflare Workers (Static Assets)
+- **백엔드/데이터베이스**: Supabase Postgres (Row Level Security 적용)
+- **백엔드 자동화/알림**: Supabase Edge Functions + pg_cron + Web Push Notification
+- **향후 확장**: 동일한 코드베이스로 Android / iOS 네이티브 앱(EAS Build) 패키징 지원 가능
+
+---
+
+## ✨ 주요 기능
+
+### 1. 간편한 온보딩 & 참여
+- 단체(공동체) 개설 및 부서 생성 (부서별 월간 목표 인원수 설정)
+- 별도의 복잡한 회원가입 절차 없이 단체 / 부서 선택 및 이름 입력으로 즉시 참여
+- 로컬 스토리지 자동 저장을 통한 자동 로그인 환경 제공
+
+### 2. 성경읽기 인증 & 묵상 기록
+- 성경 66권 및 장(Chapter) 선택을 통한 직관적인 인증 입력
+- 하루 1회 중복 방지 인증 규칙 적용
+- 오늘 인증한 말씀에 대한 개인 묵상글(선택 사항) 작성 및 공유
+
+### 3. 피드 & 대시보드
+- **오늘의 묵상**: 같은 날 인증을 완료한 지체들의 묵상글 실시간 피드 모아보기
+- **내 기록 조회**: 본인이 지금까지 작성한 인증 내역 및 묵상글 히스토리 열람
+- **진행률 대시보드**: 부서별 목표 인원수 대비 참여율 및 전체 공동체 달성률 실시간 집계
+
+### 4. PWA & Web Push 리마인드 알림
+- 웹 매니페스트 및 서비스 워커 기반 PWA 설치 지원
+- VAPID 기반 Web Push 알림 구독 기능
+- 매일 지정된 시간(한국시간 21:00 등)에 미인증자 대상 성경읽기 독려 푸시 발송 (Edge Function & pg_cron 연동)
+
+### 5. 관리자 기능
+- 단체 및 부서 목표 수정 / 관리
+- 비정상 인증 기록 또는 부적절한 묵상글에 대한 관리자 삭제 기능
+
+---
+
+## 🛠 기술 스택
+
+| 영역 | 기술 스택 | 설명 |
+| --- | --- | --- |
+| **Frontend** | React 19, React Native, React Native Web | 크로스 플랫폼 호환 웹/앱 UI 구성 |
+| **Framework** | Expo SDK 54 | 번들링 및 정적 웹 내보내기(`expo export -p web`) |
+| **Language** | TypeScript | 엄격한 타입 안정성 보장 |
+| **Database & Auth** | Supabase Postgres | 관계형 데이터베이스 및 RLS 보안 정책 |
+| **Backend & Cron** | Supabase Edge Functions, pg_cron, pg_net | 서버리스 푸시 알림 스케줄러 |
+| **Hosting** | Cloudflare Workers (Assets) | 글로벌 엣지 CDN을 통한 초고속 정적 배포 |
+| **CI / CD** | GitHub Actions | Supabase Edge Functions 배포 자동화 |
+| **Package Manager**| pnpm | 빠르고 효율적인 의존성 관리 |
+
+---
+
+## 🏗 아키텍처
 
 ```text
-사용자 브라우저/PWA
-  ├─ React Native Web UI
-  ├─ Service Worker
-  └─ Push Subscription
-
-Supabase
-  ├─ organizations
-  ├─ departments
-  ├─ members
-  ├─ reading_logs
-  ├─ push_subscriptions
-  ├─ Edge Function: send-reminders
-  └─ pg_cron: daily-reading-reminder
-
-GitHub
-  └─ Actions: Deploy Supabase Functions
-
-Cloudflare Pages
-  └─ 정적 웹앱 배포
+┌────────────────────────────────────────────────────────┐
+│                  사용자 기기 (Web / PWA)                 │
+│   React Native Web UI ── Service Worker ── Web Push    │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+             ┌─────────────┴─────────────┐
+             ▼                           ▼
+┌──────────────────────────┐   ┌─────────────────────────┐
+│ Cloudflare Workers CDN   │   │        Supabase         │
+│   (정적 Assets 호스팅)     │   │ ├─ organizations        │
+└──────────────────────────┘   │ ├─ departments          │
+                               │ ├─ members              │
+┌──────────────────────────┐   │ ├─ reading_logs         │
+│      GitHub Actions      │   │ ├─ push_subscriptions   │
+│   (Edge Function 배포)    ├───┼─ Edge Function         │
+└──────────────────────────┘   │ └─ pg_cron (알림 스케줄)  │
+                               └─────────────────────────┘
 ```
 
-## 폴더 구조
+---
+
+## 📂 폴더 구조
 
 ```text
-App.tsx                              # 화면, 상태, 인증/가입 플로우
-lib/supabase.ts                      # Supabase 클라이언트 설정
-public/manifest.webmanifest          # PWA manifest
-public/sw.js                         # 캐시, push, notificationclick 처리
-supabase/schema.sql                  # 운영 DB 스키마 및 RLS 정책
-supabase/cron.sql                    # 매일 리마인드 cron 설정
-supabase/config.toml                 # Edge Function 설정
-supabase/functions/send-reminders/   # Web Push 발송 Edge Function
-.github/workflows/                   # Supabase Function 배포 자동화
+├── App.tsx                              # 전체 화면 UI, 상태 관리 및 라우팅 로직
+├── lib/
+│   └── supabase.ts                      # Supabase 클라이언트 초기화
+├── public/
+│   ├── manifest.webmanifest          # PWA 웹 매니페스트 설정
+│   └── sw.js                         # Service Worker (오프라인 캐시 및 푸시 알림 핸들러)
+├── supabase/
+│   ├── schema.sql                    # 데이터베이스 스키마 및 RLS(Row Level Security)
+│   ├── cron.sql                      # 정기 푸시 알림 발송 pg_cron 설정
+│   ├── config.toml                   # Supabase 로컬 개발 및 Edge Function 설정
+│   └── functions/
+│       └── send-reminders/           # Web Push 발송을 담당하는 Deno 기반 Edge Function
+├── .github/workflows/
+│   └── deploy-supabase-functions.yml # GitHub Actions 자동 배포 워크플로
+├── wrangler.toml                     # Cloudflare Workers 빌드 및 배포 설정
+└── package.json
 ```
 
-## 실행 방법
+---
 
+## 🚀 로컬 실행 방법
+
+### 1. 저장소 클론 및 패키지 설치
 ```bash
+git clone https://github.com/1928704-afk/R_Bible.git
+cd R_Bible
 pnpm install
-pnpm run web
 ```
 
-웹 정적 빌드:
-
-```bash
-pnpm run build:web
-```
-
-타입 검사:
-
-```bash
-pnpm exec tsc --noEmit
-```
-
-## 환경 변수
-
-프론트엔드 환경 변수는 `.env.example`을 기준으로 설정합니다.
-
+### 2. 환경 변수 설정
+프로젝트 루트에 `.env` 파일을 생성하고 Supabase 프로젝트 정보를 입력합니다.
 ```env
 EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-public-key
 EXPO_PUBLIC_VAPID_PUBLIC_KEY=your-vapid-public-key
 ```
 
-Supabase Edge Function Secret:
+### 3. 개발 서버 실행
+```bash
+# 로컬 웹 개발 서버 시작 (http://localhost:8081)
+pnpm run web
 
-```text
-SERVICE_ROLE_KEY
-VAPID_PUBLIC_KEY
-VAPID_PRIVATE_KEY
-VAPID_SUBJECT
-REMINDER_CRON_SECRET
+# 타입 검사
+pnpm run typecheck
 ```
 
-GitHub Actions Secret:
-
-```text
-SUPABASE_ACCESS_TOKEN
-SUPABASE_PROJECT_ID
+### 4. 정적 웹 빌드
+```bash
+pnpm run build:web
 ```
 
-## Supabase 설정
+---
 
-1. Supabase 프로젝트 생성
-2. SQL Editor에서 `supabase/schema.sql` 실행
-3. Edge Function Secret 등록
-4. GitHub Actions Secret 등록
-5. `Deploy Supabase Functions` 워크플로 실행
-6. SQL Editor에서 `supabase/cron.sql` 실행
+## ☁️ 배포 가이드
 
-리마인드 cron은 UTC 기준 `0 12 * * *`이며, 한국시간 기준 매일 21:00에 실행됩니다.
+### Cloudflare Workers 배포
+프로젝트 루트의 `wrangler.toml`에 따라 Cloudflare에 배포됩니다.
+```bash
+# 정적 웹 빌드 후 Cloudflare Workers 배포
+pnpm run build:web
+npx wrangler deploy
+```
 
-## 구현 포인트
+### Supabase Edge Function 배포
+GitHub Actions 워크플로(`.github/workflows/deploy-supabase-functions.yml`)를 통해 main 브랜치 푸시 시 자동 배포됩니다.
 
-- 모바일 우선 PWA UX를 기반으로 데스크톱에서도 자연스럽게 보이도록 반응형 구성
-- 데이터 구조를 단체, 부서, 구성원, 인증 기록으로 분리
-- Web Push 구독 정보를 DB에 저장하고 Edge Function에서 구독 목록을 순회 발송
-- 만료된 push subscription은 Edge Function에서 정리
-- Supabase CLI 로컬 배포 실패 상황을 GitHub Actions 배포 경로로 우회
-- 민감한 키는 프론트 코드와 GitHub 저장소에 포함하지 않고 Secret으로 분리
+필요한 Repository Secrets:
+- `SUPABASE_ACCESS_TOKEN`: Supabase Personal Access Token
+- `SUPABASE_PROJECT_ID`: Supabase Project Reference ID
 
-## 현재 상태
+---
 
-- PWA 웹앱 운영 가능
-- Supabase DB 연동 가능
-- Web Push 수동 테스트 발송 성공
-- GitHub main push 기반 Cloudflare Pages 자동 배포 가능
-- Android/iOS 네이티브 앱 출시는 추후 EAS Build로 확장 예정
+## 📄 라이선스
+
+이 프로젝트는 [MIT License](./LICENSE)를 따릅니다.
